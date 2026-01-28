@@ -133,7 +133,8 @@ upload_sessions = defaultdict(lambda: {
     'files': [], 
     'image': None, 
     'movie_name': None,
-    'awaiting_name_edit': False
+    'awaiting_name_edit': False,
+    'user_id': None
 })
 
 async def name_decision_handler(update: Update, context: CallbackContext):
@@ -160,7 +161,11 @@ async def name_decision_handler(update: Update, context: CallbackContext):
         await check_and_save_movie(user_id, update, context)
 
 async def text_handler(update: Update, context: CallbackContext):
-    """Handle text messages for movie name editing."""
+    """Handle text messages for movie name editing - ONLY IN STORAGE GROUP."""
+    # Only handle in storage group
+    if update.effective_chat.id != STORAGE_GROUP_ID:
+        return
+    
     user_id = update.effective_user.id
     session = upload_sessions.get(user_id)
     
@@ -182,6 +187,10 @@ async def check_and_save_movie(user_id, update, context):
     """Check if all conditions are met and save the movie to database."""
     session = upload_sessions.get(user_id)
     
+    if not session:
+        return
+    
+    # Check if we have all required data
     if not (session['files'] and session['image'] and session['movie_name']):
         return
     
@@ -189,7 +198,7 @@ async def check_and_save_movie(user_id, update, context):
     movie_id = str(uuid.uuid4())
     movie_entry = {
         'movie_id': movie_id,
-        'name': session['movie_name'],
+        'name': session['movie_name'],  # This uses the EDITED name
         'media': {
             'documents': session['files'],
             'image': session['image']
@@ -248,9 +257,6 @@ async def add_movie(update: Update, context: CallbackContext):
     """Process movie uploads, cleaning filenames and managing sessions."""
     
     if update.effective_chat.id != STORAGE_GROUP_ID:
-        await update.message.reply_text(
-            sanitize_unicode("❌ You can only upload movies in the designated storage group. 🎥")
-        )
         return
 
     user_id = update.effective_user.id
@@ -292,6 +298,8 @@ async def add_movie(update: Update, context: CallbackContext):
             await update.message.reply_text(
                 sanitize_unicode(f"✅ File received: {cleaned_name}")
             )
+            # For non-admin, check if we can save
+            await check_and_save_movie(user_id, update, context)
     
     # Handle photo upload
     elif update.message.photo:
@@ -305,33 +313,31 @@ async def add_movie(update: Update, context: CallbackContext):
         }
         
         await update.message.reply_text(sanitize_unicode("🖼 Image received"))
-    
-    # For non-admin users or when not editing, check if we can save
-    if user_id != ADMIN_ID or not session['awaiting_name_edit']:
-        await check_and_save_movie(user_id, update, context)
+        
+        # Check if we can save (for non-admin or when not editing)
+        if user_id != ADMIN_ID or not session['awaiting_name_edit']:
+            await check_and_save_movie(user_id, update, context)
                
 async def search_movie(update: Update, context: CallbackContext):
     """
     Search for a movie in the database and send preview to group.
     Clicking the deep link opens the bot's PM, where the user can download files.
     """
-    # Validate the command usage
+    # Validate the command usage - ONLY IN SEARCH GROUP
     if update.effective_chat.id != SEARCH_GROUP_ID:
-        await update.message.reply_text(
-            sanitize_unicode("❌ Use this feature in the designated search group.")
-        )
         return
     
     # Get the movie name from the user's message
     movie_name = sanitize_unicode(update.message.text.strip())
     if not movie_name:
         await update.message.reply_text(
-            sanitize_unicode("🚨 Provide a movie name to search. Use /search <movie_name>")
+            sanitize_unicode("🚨 Provide a movie name to search.")
         )
         return
 
     try:
         # Search for the movie in the database
+        # Search by the EDITED name that was saved in DB
         regex_pattern = re.compile(re.escape(movie_name), re.IGNORECASE)
         results = list(collection.find({"name": {"$regex": regex_pattern}}).limit(10))
 
@@ -376,21 +382,16 @@ async def search_movie(update: Update, context: CallbackContext):
                         reply_markup=reply_markup
                     )
         else:
-            # Suggest similar movies or inform the user no results were found
-            await suggest_movies(update, movie_name)
+            # No movies found
+            await update.message.reply_text(
+                sanitize_unicode(f"🎬 No movies found for '{movie_name}'. Try a different search term.")
+            )
 
     except Exception as e:
         logging.error(f"Search error: {sanitize_unicode(str(e))}")
         await update.message.reply_text(
             sanitize_unicode("❌ An unexpected error occurred. Please try again later.")
         )
-
-async def suggest_movies(update: Update, movie_name):
-    """Suggest similar movies when no exact match is found."""
-    # You can implement movie suggestions here
-    await update.message.reply_text(
-        sanitize_unicode(f"🎬 No movies found for '{movie_name}'. Try a different search term.")
-    )
 
 # New handler for retrieving movie files
 async def get_movie_files(update: Update, context: CallbackContext):
@@ -557,15 +558,40 @@ async def main():
 
         application = ApplicationBuilder().token(TOKEN).build()
         
-        # Add handlers
+        # Add import for filters
+        from telegram.ext import filters
+        
+        # HANDLER ORDER MATTERS! Add specific handlers first
+        
+        # 1. Command handlers
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("id", id_command))
+        
+        # 2. Callback query handlers
         application.add_handler(CallbackQueryHandler(name_decision_handler, pattern="^(edit_name|continue_name)$"))
         application.add_handler(CallbackQueryHandler(get_movie_files))
-        application.add_handler(MessageHandler(filters.Document.ALL, add_movie))
-        application.add_handler(MessageHandler(filters.PHOTO, add_movie))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_movie))
+        
+        # 3. File/Photo upload handlers - ONLY in storage group
+        application.add_handler(MessageHandler(
+            filters.Document.ALL & filters.Chat(STORAGE_GROUP_ID), 
+            add_movie
+        ))
+        application.add_handler(MessageHandler(
+            filters.PHOTO & filters.Chat(STORAGE_GROUP_ID), 
+            add_movie
+        ))
+        
+        # 4. Text handler - ONLY in storage group (for name editing)
+        application.add_handler(MessageHandler(
+            filters.TEXT & ~filters.COMMAND & filters.Chat(STORAGE_GROUP_ID),
+            text_handler
+        ))
+        
+        # 5. Search handler - ONLY in search group
+        application.add_handler(MessageHandler(
+            filters.TEXT & ~filters.COMMAND & filters.Chat(SEARCH_GROUP_ID),
+            search_movie
+        ))
 
         await application.run_polling()
     except Exception as e:
