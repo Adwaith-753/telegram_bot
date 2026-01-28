@@ -94,104 +94,159 @@ def sanitize_unicode(text):
     """
     return text.encode('utf-8', 'ignore').decode('utf-8')
 
+# Clean filename function
+def clean_filename(filename):
+    """Clean the uploaded filename by removing unnecessary tags and extracting relevant details."""
+    # Remove text inside square brackets (like [CK], [1080p])
+    filename = re.sub(r'\[.*?\]', '', filename)
+
+    # Remove prefixes like @TamilMob_LinkZz and leading special characters
+    filename = re.sub(r'^[@\W_]+', '', filename)  # Removes @, -, _, spaces at the start
+
+    # Remove emojis and special characters
+    filename = re.sub(r'[^\x00-\x7F]+', '', filename)
+
+    # Replace underscores with spaces
+    filename = re.sub(r'[_\s]+', ' ', filename).strip()
+
+    # Remove unwanted tags
+    pattern = r'(?i)(HDRip|10bit|x264|AAC\d*|MB|AMZN|WEB-DL|WEBRip|HEVC|x265|ESub|HQ|\.mkv|\.mp4|\.avi|\.mov|BluRay|DVDRip|720p|1080p|540p|SD|HD|CAM|DVDScr|R5|TS|Rip|BRRip|AC3|DualAudio|6CH|v\d+)(\W|$)'
+    filename = re.sub(pattern, ' ', filename).strip()
+
+    # Extract movie name, year, and language
+    match = re.search(r'^(.*?)[\s_]*\(?(\d{4})\)?[\s_]*(Malayalam|Tamil|Hindi|Telugu|English)?', filename, re.IGNORECASE)
+
+    if match:
+        name = match.group(1).strip(" -._")  # Remove extra special characters
+        year = match.group(2).strip() if match.group(2) else ""
+        language = match.group(3).strip() if match.group(3) else ""
+
+        # Format the cleaned name
+        cleaned_name = f"{name} ({year}) {language}".strip()
+        return re.sub(r'\s+', ' ', cleaned_name)  # Remove extra spaces
+
+    # If no match is found, return the cleaned filename
+    return filename.strip(" -._")
+
 # Temporary storage for incomplete movie uploads
-upload_sessions = defaultdict(lambda: {'files': [], 'image': None, 'caption': None})
+upload_sessions = defaultdict(lambda: {
+    'files': [], 
+    'image': None, 
+    'movie_name': None,
+    'awaiting_name_edit': False
+})
+
+async def name_decision_handler(update: Update, context: CallbackContext):
+    """Handle name editing decisions from inline buttons."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    session = upload_sessions.get(user_id)
+    
+    if not session:
+        await query.message.reply_text("❌ Session expired. Please restart the upload process.")
+        return
+
+    if query.data == "edit_name":
+        session['awaiting_name_edit'] = True
+        await query.message.reply_text("✏️ Please send the new movie name:")
+
+    elif query.data == "continue_name":
+        session['awaiting_name_edit'] = False
+        await query.message.reply_text(f"✅ Name confirmed: **{session['movie_name']}**", parse_mode="Markdown")
+        
+        # Check if we can save the movie now
+        await check_and_save_movie(user_id, update, context)
+
+async def text_handler(update: Update, context: CallbackContext):
+    """Handle text messages for movie name editing."""
+    user_id = update.effective_user.id
+    session = upload_sessions.get(user_id)
+    
+    if session and session['awaiting_name_edit']:
+        new_name = sanitize_unicode(update.message.text.strip())
+        session['movie_name'] = new_name
+        session['awaiting_name_edit'] = False
+        
+        await update.message.reply_text(
+            f"✅ Movie name updated to:\n\n**{new_name}**",
+            parse_mode="Markdown"
+        )
+        
+        # Check if we can save the movie now
+        await check_and_save_movie(user_id, update, context)
+        return
+
+async def check_and_save_movie(user_id, update, context):
+    """Check if all conditions are met and save the movie to database."""
+    session = upload_sessions.get(user_id)
+    
+    if not (session['files'] and session['image'] and session['movie_name']):
+        return
+    
+    # Create movie entry
+    movie_id = str(uuid.uuid4())
+    movie_entry = {
+        'movie_id': movie_id,
+        'name': session['movie_name'],
+        'media': {
+            'documents': session['files'],
+            'image': session['image']
+        }
+    }
+
+    try:
+        collection.insert_one(movie_entry)
+        await update.message.reply_text(
+            sanitize_unicode(f"✅ Successfully added movie: {session['movie_name']}")
+        )
+
+        # Send preview to search group
+        if SEARCH_GROUP_ID:
+            await send_preview_to_group(movie_entry, context)
+
+        # Clear the session
+        del upload_sessions[user_id]
+        
+    except Exception as e:
+        logging.error(f"Database error: {str(e)}")
+        await update.message.reply_text(
+            sanitize_unicode("❌ Failed to add the movie. Please try again later.")
+        )
+
+async def send_preview_to_group(movie_entry, context):
+    """Send the movie preview to the search group."""
+    name = movie_entry.get('name', 'Unknown Movie')
+    media = movie_entry.get('media', {})
+    image_file_id = media.get('image', {}).get('file_id')
+    deep_link = f"https://t.me/{context.bot.username}?start={movie_entry['movie_id']}"
+
+    keyboard = [[InlineKeyboardButton("🎬 Download", url=deep_link)]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    try:
+        if image_file_id:
+            await context.bot.send_photo(
+                chat_id=SEARCH_GROUP_ID,
+                photo=image_file_id,
+                caption=sanitize_unicode(f"🎥 **{name}**"),
+                parse_mode="Markdown",
+                reply_markup=reply_markup
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=SEARCH_GROUP_ID,
+                text=sanitize_unicode(f"🎥 **{name}**"),
+                parse_mode="Markdown",
+                reply_markup=reply_markup
+            )
+    except Exception as e:
+        logging.error(f"Error sending preview for {sanitize_unicode(name)}: {sanitize_unicode(str(e))}")
 
 async def add_movie(update: Update, context: CallbackContext):
     """Process movie uploads, cleaning filenames and managing sessions."""
     
-    def clean_filename(filename):
-        """Clean the uploaded filename by removing unnecessary tags and extracting relevant details."""
-
-        # Remove text inside square brackets (like [CK], [1080p])
-        filename = re.sub(r'\[.*?\]', '', filename)
-
-        # Remove prefixes like @TamilMob_LinkZz and leading special characters
-        filename = re.sub(r'^[@\W_]+', '', filename)  # Removes @, -, _, spaces at the start
-
-        # Remove emojis and special characters
-        filename = re.sub(r'[^\x00-\x7F]+', '', filename)
-
-        # Replace underscores with spaces
-        filename = re.sub(r'[_\s]+', ' ', filename).strip()
-
-        # Remove unwanted tags
-        pattern = r'(?i)(HDRip|10bit|x264|AAC\d*|MB|AMZN|WEB-DL|WEBRip|HEVC|x265|ESub|HQ|\.mkv|\.mp4|\.avi|\.mov|BluRay|DVDRip|720p|1080p|540p|SD|HD|CAM|DVDScr|R5|TS|Rip|BRRip|AC3|DualAudio|6CH|v\d+)(\W|$)'
-        filename = re.sub(pattern, ' ', filename).strip()
-
-        # Extract movie name, year, and language
-        match = re.search(r'^(.*?)[\s_]*\(?(\d{4})\)?[\s_]*(Malayalam|Tamil|Hindi|Telugu|English)?', filename, re.IGNORECASE)
-
-        if match:
-            name = match.group(1).strip(" -._")  # Remove extra special characters
-            year = match.group(2).strip() if match.group(2) else ""
-            language = match.group(3).strip() if match.group(3) else ""
-
-            # Format the cleaned name
-            cleaned_name = f"{name} ({year}) {language}".strip()
-            return re.sub(r'\s+', ' ', cleaned_name)  # Remove extra spaces
-
-        # If no match is found, return the cleaned filename
-        return filename.strip(" -._")
-
-    async def process_movie_file(file_info, session, caption):
-        """Handle the movie file upload."""
-        filename = file_info.file_name
-        cleaned_name = clean_filename(filename)
-        session['files'].append({
-            'file_id': file_info.file_id,
-            'file_name': cleaned_name
-        })
-        session['caption'] = caption or session.get('caption', cleaned_name)
-        await update.message.reply_text(
-            sanitize_unicode(f"✅ {len(session['files'])} file(s) received! Now, please upload an image for the related file(s).")
-        )
-
-    async def process_image_upload(image_info, session, caption):
-        """Handle the movie poster upload."""
-        largest_photo = max(image_info, key=lambda photo: photo.width * photo.height)
-        session['image'] = {
-            'file_id': largest_photo.file_id,
-            'width': largest_photo.width,
-            'height': largest_photo.height
-        }
-        session['caption'] = caption or session.get('caption')
-        await update.message.reply_text(sanitize_unicode("✅ Image received! Now, please upload the movie file(s)."))
-
-    def create_deep_link(movie_id):
-        """Generate a deep link to the movie."""
-        return f"https://t.me/{context.bot.username}?start={movie_id}"
-
-    async def send_preview_to_group(movie_entry):
-        """Send the movie preview to the search group."""
-        name = movie_entry.get('name', 'Unknown Movie')
-        media = movie_entry.get('media', {})
-        image_file_id = media.get('image', {}).get('file_id')
-        deep_link = create_deep_link(movie_entry['movie_id'])
-
-        keyboard = [[InlineKeyboardButton("🎬 Download", url=deep_link)]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        try:
-            if image_file_id:
-                await context.bot.send_photo(
-                    chat_id=SEARCH_GROUP_ID,
-                    photo=image_file_id,
-                    caption=sanitize_unicode(f"🎥 **{name}**"),
-                    parse_mode="Markdown",
-                    reply_markup=reply_markup
-                )
-            else:
-                await context.bot.send_message(
-                    chat_id=SEARCH_GROUP_ID,
-                    text=sanitize_unicode(f"🎥 **{name}**"),
-                    parse_mode="Markdown",
-                    reply_markup=reply_markup
-                )
-        except Exception as e:
-            logging.error(f"Error sending preview for {sanitize_unicode(name)}: {sanitize_unicode(str(e))}")
-
-    # Main Logic
     if update.effective_chat.id != STORAGE_GROUP_ID:
         await update.message.reply_text(
             sanitize_unicode("❌ You can only upload movies in the designated storage group. 🎥")
@@ -199,43 +254,61 @@ async def add_movie(update: Update, context: CallbackContext):
         return
 
     user_id = update.effective_user.id
-    session = upload_sessions.setdefault(user_id, {"files": [], "image": None})
-    file_info = update.message.document
-    image_info = update.message.photo
-    caption = sanitize_unicode(update.message.caption or "")
-
-    if file_info:
-        await process_movie_file(file_info, session, caption)
-    elif image_info:
-        await process_image_upload(image_info, session, caption)
-
-    # Check if both files and image are present
-    if session['files'] and session['image']:
-        movie_name = session['files'][0]['file_name']
-        movie_id = str(uuid.uuid4())
-        movie_entry = {
-            'movie_id': movie_id,
-            'name': movie_name,
-            'media': {
-                'documents': session['files'],
-                'image': session['image']
-            }
+    session = upload_sessions.setdefault(user_id, {
+        'files': [], 
+        'image': None, 
+        'movie_name': None,
+        'awaiting_name_edit': False
+    })
+    
+    # Handle document (movie file) upload
+    if update.message.document:
+        file_info = update.message.document
+        cleaned_name = clean_filename(file_info.file_name)
+        
+        session['files'].append({
+            'file_id': file_info.file_id,
+            'file_name': cleaned_name
+        })
+        
+        # Set the movie name from the first file
+        if not session['movie_name']:
+            session['movie_name'] = cleaned_name
+        
+        # If user is admin, show edit options
+        if user_id == ADMIN_ID:
+            keyboard = [
+                [
+                    InlineKeyboardButton("✏️ Edit Name", callback_data="edit_name"),
+                    InlineKeyboardButton("✅ Continue", callback_data="continue_name")
+                ]
+            ]
+            await update.message.reply_text(
+                sanitize_unicode(f"🎬 Detected Movie Name:\n\n**{cleaned_name}**\n\nEdit or continue?"),
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            await update.message.reply_text(
+                sanitize_unicode(f"✅ File received: {cleaned_name}")
+            )
+    
+    # Handle photo upload
+    elif update.message.photo:
+        image_info = update.message.photo
+        largest_photo = max(image_info, key=lambda photo: photo.width * photo.height)
+        
+        session['image'] = {
+            'file_id': largest_photo.file_id,
+            'width': largest_photo.width,
+            'height': largest_photo.height
         }
-
-        try:
-            collection.insert_one(movie_entry)
-            await update.message.reply_text(sanitize_unicode(f"✅ Successfully added movie: {movie_name}"))
-
-            if SEARCH_GROUP_ID:
-                await send_preview_to_group(movie_entry)
-
-            del upload_sessions[user_id]
-        except Exception as e:
-            logging.error(f"Database error: {str(e)}")
-            await update.message.reply_text(sanitize_unicode("❌ Failed to add the movie. Please try again later."))
-
-    elif not (file_info or image_info):
-        await update.message.reply_text(sanitize_unicode("❌ Please upload both a movie file and an image."))
+        
+        await update.message.reply_text(sanitize_unicode("🖼 Image received"))
+    
+    # For non-admin users or when not editing, check if we can save
+    if user_id != ADMIN_ID or not session['awaiting_name_edit']:
+        await check_and_save_movie(user_id, update, context)
                
 async def search_movie(update: Update, context: CallbackContext):
     """
@@ -248,6 +321,7 @@ async def search_movie(update: Update, context: CallbackContext):
             sanitize_unicode("❌ Use this feature in the designated search group.")
         )
         return
+    
     # Get the movie name from the user's message
     movie_name = sanitize_unicode(update.message.text.strip())
     if not movie_name:
@@ -310,7 +384,14 @@ async def search_movie(update: Update, context: CallbackContext):
         await update.message.reply_text(
             sanitize_unicode("❌ An unexpected error occurred. Please try again later.")
         )
-        
+
+async def suggest_movies(update: Update, movie_name):
+    """Suggest similar movies when no exact match is found."""
+    # You can implement movie suggestions here
+    await update.message.reply_text(
+        sanitize_unicode(f"🎬 No movies found for '{movie_name}'. Try a different search term.")
+    )
+
 # New handler for retrieving movie files
 async def get_movie_files(update: Update, context: CallbackContext):
     """Send movie files to user via private message."""
@@ -441,7 +522,6 @@ async def start_web_server():
     await site.start()
     logging.info(f"Web server running on port {PORT}")
 
-
 async def keep_awake():
     """Ping the bot's hosting URL every 5 minutes to prevent sleeping."""
     url = "https://select-kitti-maxzues003-d3896a3f.koyeb.app/"
@@ -476,12 +556,16 @@ async def main():
         await start_web_server()
 
         application = ApplicationBuilder().token(TOKEN).build()
+        
+        # Add handlers
         application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("id", id_command))
+        application.add_handler(CallbackQueryHandler(name_decision_handler, pattern="^(edit_name|continue_name)$"))
+        application.add_handler(CallbackQueryHandler(get_movie_files))
         application.add_handler(MessageHandler(filters.Document.ALL, add_movie))
         application.add_handler(MessageHandler(filters.PHOTO, add_movie))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_movie))
-        application.add_handler(CallbackQueryHandler(get_movie_files))
-        application.add_handler(CommandHandler("id", id_command))
 
         await application.run_polling()
     except Exception as e:
