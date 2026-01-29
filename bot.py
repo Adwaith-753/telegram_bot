@@ -315,7 +315,7 @@ async def add_movie(update: Update, context: CallbackContext):
         await update.message.reply_text(sanitize_unicode("🖼 Image received"))
         
         # Check if we can save (for non-admin or when not editing)
-       if user_id not in ADMIN_IDS or not session['awaiting_name_edit']:
+        if user_id not in ADMIN_IDS or not session['awaiting_name_edit']:
             await check_and_save_movie(user_id, update, context)
                
 async def search_movie(update: Update, context: CallbackContext):
