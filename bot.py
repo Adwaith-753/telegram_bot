@@ -302,22 +302,21 @@ async def add_movie(update: Update, context: CallbackContext):
             await check_and_save_movie(user_id, update, context)
     
     # Handle photo upload
-        elif update.message.photo:
+    elif update.message.photo:
         image_info = update.message.photo
         largest_photo = max(image_info, key=lambda photo: photo.width * photo.height)
-
+        
         session['image'] = {
             'file_id': largest_photo.file_id,
             'width': largest_photo.width,
             'height': largest_photo.height
         }
-
+        
         await update.message.reply_text(sanitize_unicode("🖼 Image received"))
-
+        
         # Check if we can save (for non-admin or when not editing)
         if user_id not in ADMIN_IDS or not session['awaiting_name_edit']:
             await check_and_save_movie(user_id, update, context)
-
                
 async def search_movie(update: Update, context: CallbackContext):
     """
