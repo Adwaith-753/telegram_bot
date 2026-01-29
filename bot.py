@@ -44,7 +44,7 @@ TOKEN = os.getenv('TOKEN')
 DB_URL = os.getenv('DB_URL')
 SEARCH_GROUP_ID = int(os.getenv('SEARCH_GROUP_ID'))
 STORAGE_GROUP_ID = int(os.getenv('STORAGE_GROUP_ID'))
-ADMIN_ID = int(os.getenv('ADMIN_ID'))
+ADMIN_IDS = set(int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip())
 PORT = int(os.getenv('PORT', 8088))  # Default to 8088 if not set
 
 # Logging Configuration
@@ -282,7 +282,7 @@ async def add_movie(update: Update, context: CallbackContext):
             session['movie_name'] = cleaned_name
         
         # If user is admin, show edit options
-        if user_id == ADMIN_ID:
+        if user_id in ADMIN_IDS:
             keyboard = [
                 [
                     InlineKeyboardButton("✏️ Edit Name", callback_data="edit_name"),
@@ -315,7 +315,7 @@ async def add_movie(update: Update, context: CallbackContext):
         await update.message.reply_text(sanitize_unicode("🖼 Image received"))
         
         # Check if we can save (for non-admin or when not editing)
-        if user_id != ADMIN_ID or not session['awaiting_name_edit']:
+       if user_id not in ADMIN_IDS or not session['awaiting_name_edit']:
             await check_and_save_movie(user_id, update, context)
                
 async def search_movie(update: Update, context: CallbackContext):
