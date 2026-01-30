@@ -448,56 +448,137 @@ async def get_movie_files(update: Update, context: CallbackContext):
             sanitize_unicode("❌ An error occurred while fetching the movie files.")
         )
 
-async def start(update: Update, context: CallbackContext):
-    """Handle the /start command with default features or deep link for movies."""
-    user_name = update.effective_user.full_name or "there"
+
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    bot_name = context.bot.first_name
     args = context.args
 
-    if args and len(args) > 0:
-        # Deep link with movie_id
+    # 🔹 Deep link movie handling
+    if args:
         movie_id = args[0]
-        
-        # Fetch movie details from database
         movie = collection.find_one({"movie_id": movie_id})
-        
+
         if movie:
             name = movie.get('name', 'Unknown Movie')
             media = movie.get('media', {})
             image_file_id = media.get('image', {}).get('file_id')
             documents = media.get('documents', [])
 
-            # Send image preview if available
             if image_file_id:
-                try:
-                    await update.message.reply_photo(
-                        photo=image_file_id,
-                        caption=sanitize_unicode(f"🎥 **{name}**\n\nFiles available: {len(documents)}"),
-                        parse_mode="Markdown"
-                    )
-                except Exception as e:
-                    logging.error(f"Error sending movie details: {sanitize_unicode(str(e))}")
-            # Send movie files
-            for doc in documents:
-                document_file_id = doc.get('file_id')
-                document_file_name = doc.get('file_name', 'movie_file')
-                if document_file_id:
-                    try:
-                        await context.bot.send_document(
-                            chat_id=update.effective_chat.id,
-                            document=document_file_id
-                        )
-                    except Exception as e:
-                        logging.error(f"Error sending file: {sanitize_unicode(str(e))}")
+                await update.message.reply_photo(
+                    photo=image_file_id,
+                    caption=f"🎥 **{name}**",
+                    parse_mode="Markdown"
+                )
 
+            for doc in documents:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=doc["file_id"]
+                )
             return
-    # Default behavior when no movie_id is provided
-    keyboard = [[InlineKeyboardButton("Add me to your chat! 🤖", url="https://t.me/+8h2UInNOV-o5YzI1")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        text=f"Hi {sanitize_unicode(user_name)}! 👋 Use me to search. 🎥",
-        reply_markup=reply_markup
+
+    # 🔹 Home menu
+    text = (
+        f"ʜᴇʏ {sanitize_unicode(user.first_name)} ,\n"
+        f"Mʏ Nᴀᴍᴇ ɪs {sanitize_unicode(bot_name)}, ʏᴏᴜ ᴄᴀɴ ᴜsᴇ ᴍᴇ ɪɴ ʏᴏᴜʀ "
+        f"ɢʀᴏᴜᴘ ɪ ᴡɪʟʟ ɢɪᴠᴇ ᴍᴏᴠɪᴇs ᴏʀ sᴇʀɪᴇs ɪɴ ʏᴏᴜʀ ɢʀᴏᴜᴘ.!! 😍"
     )
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "➕ Add Me To Your Chat",
+            url=f"https://t.me/{context.bot.username}?startgroup=true"
+        )],
+        [
+            InlineKeyboardButton("💬 Comments", callback_data="menu_comments"),
+            InlineKeyboardButton("📦 Source", callback_data="menu_source")
+        ],
+        [
+            InlineKeyboardButton("📊 Status", callback_data="menu_status"),
+            InlineKeyboardButton("❌ Close", callback_data="menu_close")
+        ]
+    ])
+
+    if update.message:
+        await update.message.reply_text(text, reply_markup=keyboard)
+    else:
+        await update.callback_query.message.edit_text(text, reply_markup=keyboard)
+
+
+
+async def menu_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    text = (
+        "📌 **Available Commands**\n\n"
+        "/start – Start bot\n"
+        "/search – Search movies\n"
+        "/list – Admin movie list\n"
+        "/id – Get IDs\n"
+    )
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 Back To Home", callback_data="menu_home")]
+    ])
+
+    await query.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
+
+
+async def menu_source(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    text = (
+        "📢 **NOTE:**\n\n"
+        "- ᴛʜɪꜱ ʙᴏᴛ ɪs ɴᴏᴛ ᴀɴ ᴏᴘᴇɴ sᴏᴜʀᴄᴇ ᴘʀᴏᴊᴇᴄᴛ."
+    )
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 Back To Home", callback_data="menu_home")]
+    ])
+
+    await query.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
+
+async def menu_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    total_files = collection.count_documents({})
+    total_users = "N/A"
+    used_storage = "N/A"
+    free_storage = "N/A"
+
+    text = (
+        f"★ 𝚃𝙾𝚃𝙰𝙻 𝙵𝙸𝙻𝙴𝚂: {total_files}\n"
+        f"★ 𝚃𝙾𝚃𝙰𝙻 𝚄𝚂𝙴𝚁𝚂: {total_users}\n"
+        f"★ 𝚄𝚂𝙴𝙳 𝚂𝚃𝙾𝚁𝙰𝙶𝙴: {used_storage}\n"
+        f"★ 𝙵𝚁𝙴𝙴 𝚂𝚃𝙾𝚁𝙰𝙶𝙴: {free_storage}"
+    )
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 Back To Home", callback_data="menu_home")]
+    ])
+
+    await query.message.edit_text(text, reply_markup=keyboard)
+
+
+async def menu_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.delete()
+
+
+async def menu_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await start(update, context)
+
+
 
 # Define the /id command handler
 async def id_command(update: Update, context: CallbackContext):
@@ -572,8 +653,17 @@ async def ask_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
+    user_id = query.from_user.id
+    session = delete_sessions.get(user_id)
+
+    if not session:
+        await query.message.reply_text("❌ No active list found.")
+        return
+
+    count = len(session["movies"])
+
     await query.message.reply_text(
-        "✏️ **Send the movie number to delete (1–10)**",
+        f"✏️ **Send the movie number to delete (1–{count})**",
         parse_mode="Markdown"
     )
 
@@ -607,7 +697,7 @@ async def delete_by_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ✅ Number range check
     if index < 0 or index >= len(movies):
-        await update.message.reply_text("❌ Invalid number. Please choose from the list.")
+        await update.message.reply_text(f"❌ Invalid number.\nPlease choose a number **from this page only**.",parse_mode="Markdown")
         return
 
     movie = movies[index]
@@ -675,6 +765,21 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.delete()
 
 
+async def start_menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = update.callback_query.data
+
+    if data == "menu_home":
+        await menu_home(update, context)
+    elif data == "menu_comments":
+        await menu_comments(update, context)
+    elif data == "menu_source":
+        await menu_source(update, context)
+    elif data == "menu_status":
+        await menu_status(update, context)
+    elif data == "menu_close":
+        await menu_close(update, context)
+
+
 async def start_web_server():
     """Start a web server for health checks."""
     async def handle_health(request):
@@ -728,16 +833,24 @@ async def main():
         from telegram.ext import filters
         
         # HANDLER ORDER MATTERS! Add specific handlers first
-        
+
         # 1. Command handlers
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("id", id_command))
         application.add_handler(CommandHandler("list", list_movies))
 
-        # 2. Callback query handlers
+        #MENU BUTTONS (/start menu)
+        application.add_handler(CallbackQueryHandler(start_menu_router, pattern="^menu_"))
+
+        #MOVIE UPLOAD NAME EDIT
         application.add_handler(CallbackQueryHandler(name_decision_handler, pattern="^(edit_name|continue_name)$"))
+
+        #MOVIE DOWNLOAD BUTTON
         application.add_handler(CallbackQueryHandler(get_movie_files, pattern="^movie_"))
-        application.add_handler(CallbackQueryHandler(callback_router))
+
+        #LIST / DELETE / PAGINATION
+        application.add_handler(CallbackQueryHandler(callback_router,pattern="^(page:|ask_delete|confirm_del:|cancel_del)"))
+
 
         # 3. File/Photo upload handlers - ONLY in storage group
         application.add_handler(MessageHandler(
