@@ -534,7 +534,7 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = "No movies found."
     else:
         text = f"🎬 **Total movies stored: {total}**\n\n"
-        for i, movie in enumerate(movies, start=1):
+        for i, movie in enumerate(movies, movies, start=skip + 1):
             text += f"{i}. {movie.get('name', 'Unknown Movie')}\n"
 
     # Save movies for delete-by-number
