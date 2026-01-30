@@ -873,18 +873,32 @@ async def main():
         application.add_handler(CommandHandler("id", id_command))
         application.add_handler(CommandHandler("list", list_movies))
 
-        #MENU BUTTONS (/start menu)
-        application.add_handler(CallbackQueryHandler(start_menu_router, pattern="^menu_"))
-
-        #MOVIE UPLOAD NAME EDIT
-        application.add_handler(CallbackQueryHandler(name_decision_handler, pattern="^(edit_name|continue_name)$"))
-
-        #MOVIE DOWNLOAD BUTTON
-        application.add_handler(CallbackQueryHandler(get_movie_files, pattern="^movie_"))
-
-        #LIST / DELETE / PAGINATION
-        application.add_handler(CallbackQueryHandler(callback_router,pattern="^(page:|ask_delete|confirm_del:|cancel_del)"))
-
+        # 2. Callback Query Handlers - ORDER IS CRITICAL!
+        
+        # First: Start menu router (most specific patterns for start menu)
+        # This should come BEFORE other patterns that might match
+        application.add_handler(CallbackQueryHandler(
+            start_menu_router, 
+            pattern="^(menu_|cmd_)"  # Combine both patterns
+        ))
+        
+        # Second: Movie upload name edit
+        application.add_handler(CallbackQueryHandler(
+            name_decision_handler, 
+            pattern="^(edit_name|continue_name)$"
+        ))
+        
+        # Third: Movie download button
+        application.add_handler(CallbackQueryHandler(
+            get_movie_files, 
+            pattern="^movie_"
+        ))
+        
+        # Fourth: List/delete/pagination (less specific patterns last)
+        application.add_handler(CallbackQueryHandler(
+            callback_router,
+            pattern="^(page:|ask_delete|confirm_del:|cancel_del)$"
+        ))
 
         # 3. File/Photo upload handlers - ONLY in storage group
         application.add_handler(MessageHandler(
@@ -918,7 +932,7 @@ async def main():
         logging.error(f"Main loop error: {e}")
     finally:
         logging.info("Shutting down bot...")
-
+        
 if __name__ == "__main__":
     try:
         asyncio.run(main())
