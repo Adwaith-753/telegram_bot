@@ -529,15 +529,16 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if not movies:
-        await update.message.reply_text("No movies found.")
-        return
+        text = "No movies found."
+    else:
+        text = f"🎬 **Total movies stored: {total}**\n\n"
+        for i, movie in enumerate(movies, start=skip + 1):
+            title = movie.get("name", "Unknown Movie")
+            text += f"{i}. {title}\n"
 
-    text = f"🎬 **Total movies stored: {total}**\n\n"
     keyboard = []
 
-    for i, movie in enumerate(movies, start=skip + 1):
-        title = movie.get("name", "Unknown Movie")
-        text += f"{i}. {title}\n"
+    for movie in movies:
         keyboard.append([
             InlineKeyboardButton(
                 "🗑 Delete",
@@ -554,11 +555,25 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if nav:
         keyboard.append(nav)
 
-    await update.message.reply_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # 🔑 THIS IS THE IMPORTANT PART
+    if update.message:
+        # Called from /list command
+        await update.message.reply_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+    else:
+        # Called from pagination callback
+        query = update.callback_query
+        await query.message.edit_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+
 
 # Pagination handler
 async def paginate(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -567,7 +582,6 @@ async def paginate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     page = int(query.data.split(":")[1])
 
-    await query.message.delete()
     context.args = [str(page)]
     await list_movies(update, context)
 
