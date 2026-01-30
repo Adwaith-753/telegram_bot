@@ -514,28 +514,19 @@ async def menu_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    text = "📌 **Available Commands**"
-
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("▶️ Start Bot", callback_data="cmd_start"),
-            InlineKeyboardButton("🔍 Search Movies", callback_data="cmd_search")
-        ],
-        [
-            InlineKeyboardButton("📂 Movie List", callback_data="cmd_list"),
-            InlineKeyboardButton("🆔 Get IDs", callback_data="cmd_id")
-        ],
-        [
-            InlineKeyboardButton("🔙 Back To Home", callback_data="menu_home")
-        ]
-    ])
-
-    await query.message.edit_text(
-        text,
-        reply_markup=keyboard,
-        parse_mode="Markdown"
+    text = (
+        "📌 **Available Commands**\n\n"
+        "/start – Start bot\n"
+        "/search – Search movies\n"
+        "/list – Admin movie list\n"
+        "/id – Get IDs\n"
     )
 
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 Back To Home", callback_data="menu_home")]
+    ])
+
+    await query.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
 
 
 
@@ -775,43 +766,18 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def start_menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query 
-    data = query.data
-    await query.answer()
+    data = update.callback_query.data
 
     if data == "menu_home":
         await menu_home(update, context)
-
     elif data == "menu_comments":
         await menu_comments(update, context)
-
     elif data == "menu_source":
         await menu_source(update, context)
-
     elif data == "menu_status":
         await menu_status(update, context)
-
     elif data == "menu_close":
         await menu_close(update, context)
-
-    elif data == "cmd_start":
-        await query.message.reply_text("/start")
-
-    elif data == "cmd_search":
-        await query.message.reply_text(
-            "🔍 **Type movie name in the search group**",
-            parse_mode="Markdown"
-        )
-
-    elif data == "cmd_list":
-        if query.from_user.id in ADMIN_IDS:
-            await query.message.reply_text("/list")
-        else:
-            await query.answer("❌ Admin only", show_alert=True)
-
-    elif data == "cmd_id":
-        await query.message.reply_text("/id")
-
 
 
 async def start_web_server():
@@ -873,32 +839,18 @@ async def main():
         application.add_handler(CommandHandler("id", id_command))
         application.add_handler(CommandHandler("list", list_movies))
 
-        # 2. Callback Query Handlers - ORDER IS CRITICAL!
-        
-        # First: Start menu router (most specific patterns for start menu)
-        # This should come BEFORE other patterns that might match
-        application.add_handler(CallbackQueryHandler(
-            start_menu_router, 
-            pattern="^(menu_|cmd_)"  # Combine both patterns
-        ))
-        
-        # Second: Movie upload name edit
-        application.add_handler(CallbackQueryHandler(
-            name_decision_handler, 
-            pattern="^(edit_name|continue_name)$"
-        ))
-        
-        # Third: Movie download button
-        application.add_handler(CallbackQueryHandler(
-            get_movie_files, 
-            pattern="^movie_"
-        ))
-        
-        # Fourth: List/delete/pagination (less specific patterns last)
-        application.add_handler(CallbackQueryHandler(
-            callback_router,
-            pattern="^(page:|ask_delete|confirm_del:|cancel_del)$"
-        ))
+        #MENU BUTTONS (/start menu)
+        application.add_handler(CallbackQueryHandler(start_menu_router, pattern="^menu_"))
+
+        #MOVIE UPLOAD NAME EDIT
+        application.add_handler(CallbackQueryHandler(name_decision_handler, pattern="^(edit_name|continue_name)$"))
+
+        #MOVIE DOWNLOAD BUTTON
+        application.add_handler(CallbackQueryHandler(get_movie_files, pattern="^movie_"))
+
+        #LIST / DELETE / PAGINATION
+        application.add_handler(CallbackQueryHandler(callback_router,pattern="^(page:|ask_delete|confirm_del:|cancel_del)"))
+
 
         # 3. File/Photo upload handlers - ONLY in storage group
         application.add_handler(MessageHandler(
@@ -932,7 +884,7 @@ async def main():
         logging.error(f"Main loop error: {e}")
     finally:
         logging.info("Shutting down bot...")
-        
+
 if __name__ == "__main__":
     try:
         asyncio.run(main())
