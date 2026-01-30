@@ -518,19 +518,20 @@ async def menu_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("▶️ Start Bot", callback_data="cmd_start"),
-            InlineKeyboardButton("🔍 Search Movies", callback_data="cmd_search")
+            InlineKeyboardButton("▶️ Start Bot", callback_data="/start"),
+            InlineKeyboardButton("🔍 Search Movies", callback_data="/search")
         ],
         [
-            InlineKeyboardButton("📂 Movie List", callback_data="cmd_list"),
-            InlineKeyboardButton("🆔 Get IDs", callback_data="cmd_id")
+            InlineKeyboardButton("📂 Movie List", callback_data="/list"),
+            InlineKeyboardButton("🆔 Get IDs", callback_data="/id")
         ],
         [
             InlineKeyboardButton("🔙 Back To Home", callback_data="menu_home")
         ]
     ])
 
-    await query.message.edit_text(text,reply_markup=keyboard,parse_mode="Markdown")
+    await query.message.edit_text(text,reply_markup=keyboard,parse_mode="Markdown"
+)
 
 
 
@@ -772,56 +773,18 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def start_menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    data = update.callback_query.data
 
-    data = query.data
-
-    # ===== MAIN MENU =====
     if data == "menu_home":
         await menu_home(update, context)
-
     elif data == "menu_comments":
         await menu_comments(update, context)
-
     elif data == "menu_source":
         await menu_source(update, context)
-
     elif data == "menu_status":
         await menu_status(update, context)
-
     elif data == "menu_close":
         await menu_close(update, context)
-
-    # ===== COMMAND BUTTONS =====
-    elif data == "cmd_start":
-        # Restart home menu cleanly
-        await menu_home(update, context)
-
-    elif data == "cmd_search":
-        await query.answer(
-            "🔍 Type the movie name in the SEARCH GROUP",
-            show_alert=True
-        )
-
-    elif data == "cmd_list":
-        if query.from_user.id in ADMIN_IDS:
-            # Call list directly (no text spam)
-            context.args = []
-            await list_movies(update, context)
-        else:
-            await query.answer("❌ Admin only command", show_alert=True)
-
-    elif data == "cmd_id":
-        user_id = query.from_user.id
-        chat_id = query.message.chat.id
-
-        await query.message.reply_text(
-            f"🆔 **Your ID Info**\n\n"
-            f"👤 User ID: `{user_id}`\n"
-            f"💬 Chat ID: `{chat_id}`",
-            parse_mode="Markdown"
-        )
 
 
 async def start_web_server():
