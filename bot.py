@@ -517,11 +517,17 @@ async def menu_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "📌 **Available Commands**"
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("▶️ Start Bot", callback_data="cmd_start")],
-        [InlineKeyboardButton("🔍 Search Movies", callback_data="cmd_search")],
-        [InlineKeyboardButton("📂 Movie List (Admin)", callback_data="cmd_list")],
-        [InlineKeyboardButton("🆔 Get IDs", callback_data="cmd_id")],
-        [InlineKeyboardButton("🔙 Back To Home", callback_data="menu_home")]
+        [
+            InlineKeyboardButton("▶️ Start Bot", callback_data="cmd_start"),
+            InlineKeyboardButton("🔍 Search Movies", callback_data="cmd_search")
+        ],
+        [
+            InlineKeyboardButton("📂 Movie List", callback_data="cmd_list"),
+            InlineKeyboardButton("🆔 Get IDs", callback_data="cmd_id")
+        ],
+        [
+            InlineKeyboardButton("🔙 Back To Home", callback_data="menu_home")
+        ]
     ])
 
     await query.message.edit_text(
@@ -790,23 +796,33 @@ async def start_menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== COMMAND BUTTONS =====
     elif data == "cmd_start":
-        await query.message.reply_text("/start")
+        # Restart home menu cleanly
+        await menu_home(update, context)
 
     elif data == "cmd_search":
-        await query.message.reply_text(
-            "🔍 **How to search movies**\n\n"
-            "Type the movie name in the **search group**.",
-            parse_mode="Markdown"
+        await query.answer(
+            "🔍 Type the movie name in the SEARCH GROUP",
+            show_alert=True
         )
 
     elif data == "cmd_list":
         if query.from_user.id in ADMIN_IDS:
-            await query.message.reply_text("/list")
+            # Call list directly (no text spam)
+            context.args = []
+            await list_movies(update, context)
         else:
             await query.answer("❌ Admin only command", show_alert=True)
 
     elif data == "cmd_id":
-        await query.message.reply_text("/id")
+        user_id = query.from_user.id
+        chat_id = query.message.chat.id
+
+        await query.message.reply_text(
+            f"🆔 **Your ID Info**\n\n"
+            f"👤 User ID: `{user_id}`\n"
+            f"💬 Chat ID: `{chat_id}`",
+            parse_mode="Markdown"
+        )
 
 
 async def start_web_server():
