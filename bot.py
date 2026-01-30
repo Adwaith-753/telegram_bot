@@ -583,6 +583,52 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         title = movie.get("name", "Unknown Movie")
         text += f"{i}. {title}\n"
         keyboard.append([
+            InlineKeyboardButton(
+                "🗑 Delete",
+                callback_data=f"del:{movie['_id']}:{page}"
+            )
+        ])
+
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"page:{page-1}"))
+    if skip + PAGE_SIZE < total:
+        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"page:{page+1}"))
+
+    if nav:
+        keyboard.append(nav)
+
+    await update.message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+
+    page = int(context.args[0]) if context.args else 1
+    skip = (page - 1) * PAGE_SIZE
+
+    total = collection.count_documents({})
+    movies = list(
+        collection.find({})
+        .sort("name", 1)
+        .skip(skip)
+        .limit(PAGE_SIZE)
+    )
+
+    if not movies:
+        await update.message.reply_text("No movies found.")
+        return
+
+    text = f"🎬 **Total movies stored: {total}**\n\n"
+    keyboard = []
+
+    for i, movie in enumerate(movies, start=skip + 1):
+        title = movie.get("name", "Unknown Movie")
+        text += f"{i}. {title}\n"
+        keyboard.append([
             InlineKeyboardButton("🗑 Delete", callback_data=f"del:{movie['_id']}:{page}")
         ])
 
@@ -759,17 +805,6 @@ async def delete_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Callback router
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = update.callback_query.data
-
-    if data.startswith("page:"):
-        await paginate(update, context)
-    elif data.startswith("del:"):
-        await confirm_delete(update, context)
-    elif data.startswith("cancel:"):
-        await cancel_delete(update, context)
-    elif data.startswith("confirm:"):
-        await delete_movie(update, context)
-
     data = update.callback_query.data
 
     if data.startswith("page:"):
