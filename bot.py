@@ -558,142 +558,6 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-
-    page = int(context.args[0]) if context.args else 1
-    skip = (page - 1) * PAGE_SIZE
-
-    total = collection.count_documents({})
-    movies = list(
-        collection.find({})
-        .sort("name", 1)
-        .skip(skip)
-        .limit(PAGE_SIZE)
-    )
-
-    if not movies:
-        await update.message.reply_text("No movies found.")
-        return
-
-    text = f"🎬 **Total movies stored: {total}**\n\n"
-    keyboard = []
-
-    for i, movie in enumerate(movies, start=skip + 1):
-        title = movie.get("name", "Unknown Movie")
-        text += f"{i}. {title}\n"
-        keyboard.append([
-            InlineKeyboardButton(
-                "🗑 Delete",
-                callback_data=f"del:{movie['_id']}:{page}"
-            )
-        ])
-
-    nav = []
-    if page > 1:
-        nav.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"page:{page-1}"))
-    if skip + PAGE_SIZE < total:
-        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"page:{page+1}"))
-
-    if nav:
-        keyboard.append(nav)
-
-    await update.message.reply_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
-
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-
-    page = int(context.args[0]) if context.args else 1
-    skip = (page - 1) * PAGE_SIZE
-
-    total = collection.count_documents({})
-    movies = list(
-        collection.find({})
-        .sort("name", 1)
-        .skip(skip)
-        .limit(PAGE_SIZE)
-    )
-
-    if not movies:
-        await update.message.reply_text("No movies found.")
-        return
-
-    text = f"🎬 **Total movies stored: {total}**\n\n"
-    keyboard = []
-
-    for i, movie in enumerate(movies, start=skip + 1):
-        title = movie.get("name", "Unknown Movie")
-        text += f"{i}. {title}\n"
-        keyboard.append([
-            InlineKeyboardButton("🗑 Delete", callback_data=f"del:{movie['_id']}:{page}")
-        ])
-
-    nav = []
-    if page > 1:
-        nav.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"page:{page-1}"))
-    if skip + PAGE_SIZE < total:
-        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"page:{page+1}"))
-
-    if nav:
-        keyboard.append(nav)
-
-    await update.message.reply_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
-
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-
-    page = int(context.args[0]) if context.args else 1
-    skip = (page - 1) * PAGE_SIZE
-
-    total = movies_col.count_documents({})
-    movies = list(
-        movies_col.find({})
-        .sort("name", 1)
-        .skip(skip)
-        .limit(PAGE_SIZE)
-    )
-
-    if not movies:
-        await update.message.reply_text("No movies found.")
-        return
-
-    text = f"🎬 **Total movies stored: {total}**\n\n"
-
-    keyboard = []
-
-    for i, movie in enumerate(movies, start=skip + 1):
-        title = f"{movie['name']} ({movie['year']}) {movie['language']}"
-        text += f"{i}. {title}\n"
-        keyboard.append([
-            InlineKeyboardButton(
-                "🗑 Delete",
-                callback_data=f"del:{movie['_id']}:{page}"
-            )
-        ])
-
-    nav = []
-    if page > 1:
-        nav.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"page:{page-1}"))
-    if skip + PAGE_SIZE < total:
-        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"page:{page+1}"))
-
-    if nav:
-        keyboard.append(nav)
-
-    await update.message.reply_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
-
 # Pagination handler
 async def paginate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -705,13 +569,6 @@ async def paginate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.args = [str(page)]
     await list_movies(update, context)
 
-    query = update.callback_query
-    await query.answer()
-
-    page = int(query.data.split(":")[1])
-    context.args = [str(page)]
-    await query.message.delete()
-    await list_movies(update, context)
 
 #Delete confirmation dialog
 async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -722,27 +579,6 @@ async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     movie = collection.find_one({"_id": ObjectId(movie_id)})
 
     title = movie.get("name", "Unknown Movie")
-
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("❌ Cancel", callback_data=f"cancel:{page}"),
-            InlineKeyboardButton("✅ Delete", callback_data=f"confirm:{movie_id}:{page}")
-        ]
-    ])
-
-    await query.message.reply_text(
-        f"⚠️ **Are you sure you want to delete:**\n🎬 {title}",
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
-
-    query = update.callback_query
-    await query.answer()
-
-    _, movie_id, page = query.data.split(":")
-    movie = movies_col.find_one({"_id": ObjectId(movie_id)})
-
-    title = f"{movie['name']} ({movie['year']}) {movie['language']}"
 
     keyboard = InlineKeyboardMarkup([
         [
@@ -784,22 +620,16 @@ async def delete_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     _, movie_id, page = query.data.split(":")
 
+    # Delete movie from DB
     collection.delete_one({"_id": ObjectId(movie_id)})
 
-    await query.message.reply_text("🗑 **Movie deleted successfully!**", parse_mode="Markdown")
+    # Edit message instead of replying multiple times
+    await query.message.edit_text(
+        "🗑 **Movie deleted successfully!**",
+        parse_mode="Markdown"
+    )
 
-    context.args = [page]
-    await list_movies(update, context)
-
-    query = update.callback_query
-    await query.answer()
-
-    _, movie_id, page = query.data.split(":")
-
-    movies_col.delete_one({"_id": ObjectId(movie_id)})
-
-    await query.message.reply_text("🗑 **Movie deleted successfully!**", parse_mode="Markdown")
-
+    # Refresh list
     context.args = [page]
     await list_movies(update, context)
 
