@@ -514,20 +514,21 @@ async def menu_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    text = (
-        "📌 **Available Commands**\n\n"
-        "/start – Start bot\n"
-        "/search – Search movies\n"
-        "/list – Admin movie list\n"
-        "/id – Get IDs\n"
-    )
+    text = "📌 **Available Commands**"
 
     keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("▶️ Start Bot", callback_data="cmd_start")],
+        [InlineKeyboardButton("🔍 Search Movies", callback_data="cmd_search")],
+        [InlineKeyboardButton("📂 Movie List (Admin)", callback_data="cmd_list")],
+        [InlineKeyboardButton("🆔 Get IDs", callback_data="cmd_id")],
         [InlineKeyboardButton("🔙 Back To Home", callback_data="menu_home")]
     ])
 
-    await query.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
-
+    await query.message.edit_text(
+        text,
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
 
 
 async def menu_source(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -556,10 +557,10 @@ async def menu_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     free_storage = "N/A"
 
     text = (
-        f"★ 𝚃𝙾𝚃𝙰𝙻 𝙵𝙸𝙻𝙴𝚂: {total_files}\n"
-        f"★ 𝚃𝙾𝚃𝙰𝙻 𝚄𝚂𝙴𝚁𝚂: {total_users}\n"
-        f"★ 𝚄𝚂𝙴𝙳 𝚂𝚃𝙾𝚁𝙰𝙶𝙴: {used_storage}\n"
-        f"★ 𝙵𝚁𝙴𝙴 𝚂𝚃𝙾𝚁𝙰𝙶𝙴: {free_storage}"
+        f"📂 𝚃𝙾𝚃𝙰𝙻 𝙵𝙸𝙻𝙴𝚂: {total_files}\n"
+        f"👥 𝚃𝙾𝚃𝙰𝙻 𝚄𝚂𝙴𝚁𝚂: {total_users}\n"
+        f"💾 𝚄𝚂𝙴𝙳 𝚂𝚃𝙾𝚁𝙰𝙶𝙴: {used_storage}\n"
+        f"🆓 𝙵𝚁𝙴𝙴 𝚂𝚃𝙾𝚁𝙰𝙶𝙴: {free_storage}"
     )
 
     keyboard = InlineKeyboardMarkup([
@@ -766,18 +767,46 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def start_menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = update.callback_query.data
+    query = update.callback_query
+    await query.answer()
 
+    data = query.data
+
+    # ===== MAIN MENU =====
     if data == "menu_home":
         await menu_home(update, context)
+
     elif data == "menu_comments":
         await menu_comments(update, context)
+
     elif data == "menu_source":
         await menu_source(update, context)
+
     elif data == "menu_status":
         await menu_status(update, context)
+
     elif data == "menu_close":
         await menu_close(update, context)
+
+    # ===== COMMAND BUTTONS =====
+    elif data == "cmd_start":
+        await query.message.reply_text("/start")
+
+    elif data == "cmd_search":
+        await query.message.reply_text(
+            "🔍 **How to search movies**\n\n"
+            "Type the movie name in the **search group**.",
+            parse_mode="Markdown"
+        )
+
+    elif data == "cmd_list":
+        if query.from_user.id in ADMIN_IDS:
+            await query.message.reply_text("/list")
+        else:
+            await query.answer("❌ Admin only command", show_alert=True)
+
+    elif data == "cmd_id":
+        await query.message.reply_text("/id")
 
 
 async def start_web_server():
