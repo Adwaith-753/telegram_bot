@@ -140,6 +140,8 @@ upload_sessions = defaultdict(lambda: {
     'user_id': None
 })
 
+delete_sessions = {}
+
 async def name_decision_handler(update: Update, context: CallbackContext):
     """Handle name editing decisions from inline buttons."""
     query = update.callback_query
@@ -532,19 +534,16 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = "No movies found."
     else:
         text = f"🎬 **Total movies stored: {total}**\n\n"
-        for i, movie in enumerate(movies, start=skip + 1):
-            title = movie.get("name", "Unknown Movie")
-            text += f"{i}. {title}\n"
+        for i, movie in enumerate(movies, start=1):
+            text += f"{i}. {movie.get('name', 'Unknown Movie')}\n"
+
+    # Save movies for delete-by-number
+    delete_sessions[update.effective_user.id] = {
+        "page": page,
+        "movies": movies
+    }
 
     keyboard = []
-
-    for movie in movies:
-        keyboard.append([
-            InlineKeyboardButton(
-                "🗑 Delete",
-                callback_data=f"del:{movie['_id']}:{page}"
-            )
-        ])
 
     nav = []
     if page > 1:
@@ -555,24 +554,82 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if nav:
         keyboard.append(nav)
 
+    keyboard.append([
+        InlineKeyboardButton("🗑 Delete", callback_data="ask_delete")
+    ])
+
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # 🔑 THIS IS THE IMPORTANT PART
     if update.message:
-        # Called from /list command
-        await update.message.reply_text(
-            text,
-            reply_markup=reply_markup,
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
     else:
-        # Called from pagination callback
-        query = update.callback_query
-        await query.message.edit_text(
-            text,
-            reply_markup=reply_markup,
-            parse_mode="Markdown"
+        await update.callback_query.message.edit_text(
+            text, reply_markup=reply_markup, parse_mode="Markdown"
         )
+
+
+async def ask_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    await query.message.reply_text(
+        "✏️ **Send the movie number to delete (1–10)**",
+        parse_mode="Markdown"
+    )
+
+
+async def delete_by_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ✅ Only admins can delete
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+
+    # ✅ Must be a normal text message
+    if not update.message or not update.message.text:
+        return
+
+    user_id = update.effective_user.id
+
+    # ✅ Must have an active delete session
+    if user_id not in delete_sessions:
+        return
+
+    text = update.message.text.strip()
+
+    # ✅ Only accept numbers
+    if not text.isdigit():
+        await update.message.reply_text("❌ Please send a valid number.")
+        return
+
+    index = int(text) - 1
+    session = delete_sessions[user_id]
+    movies = session["movies"]
+    page = session["page"]
+
+    # ✅ Number range check
+    if index < 0 or index >= len(movies):
+        await update.message.reply_text("❌ Invalid number. Please choose from the list.")
+        return
+
+    movie = movies[index]
+
+    # ✅ Store selected movie for confirmation
+    delete_sessions[user_id]["selected"] = movie
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("❌ Cancel", callback_data="cancel_del"),
+            InlineKeyboardButton(
+                "✅ Confirm",
+                callback_data=f"confirm_del:{movie['_id']}:{page}"
+            )
+        ]
+    ])
+
+    await update.message.reply_text(
+        f"⚠️ **Are you sure you want to delete:**\n\n🎬 **{movie.get('name', 'Unknown Movie')}**",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
 
 
 # Pagination handler
@@ -587,67 +644,19 @@ async def paginate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 #Delete confirmation dialog
-async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    _, movie_id, page = query.data.split(":")
-    movie = collection.find_one({"_id": ObjectId(movie_id)})
-
-    title = movie.get("name", "Unknown Movie")
-
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("❌ Cancel", callback_data=f"cancel:{page}"),
-            InlineKeyboardButton("✅ Delete", callback_data=f"confirm:{movie_id}:{page}")
-        ]
-    ])
-
-    await query.message.reply_text(
-        f"⚠️ **Are you sure you want to delete:**\n🎬 {title}",
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
-
-# Cancel deletion
-async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer("Deletion cancelled ❌")
-
-    page = query.data.split(":")[1]
-
-    await query.message.delete()
-    context.args = [page]
-    await list_movies(update, context)
-
-    query = update.callback_query
-    await query.answer("Deletion cancelled ❌")
-
-    page = query.data.split(":")[1]
-    await query.message.delete()
-
-    context.args = [page]
-    await list_movies(update, context)
-
-# Confirm deletion + refresh list
-async def delete_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def confirm_number_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     _, movie_id, page = query.data.split(":")
 
-    # Delete movie from DB
     collection.delete_one({"_id": ObjectId(movie_id)})
 
-    # Edit message instead of replying multiple times
-    await query.message.edit_text(
-        "🗑 **Movie deleted successfully!**",
-        parse_mode="Markdown"
-    )
+    await query.message.edit_text("🗑 **Movie deleted successfully!**", parse_mode="Markdown")
 
-    # Refresh list
     context.args = [page]
     await list_movies(update, context)
+
 
 # Callback router
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -655,12 +664,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("page:"):
         await paginate(update, context)
-    elif data.startswith("del:"):
-        await confirm_delete(update, context)
-    elif data.startswith("cancel:"):
-        await cancel_delete(update, context)
-    elif data.startswith("confirm:"):
-        await delete_movie(update, context)
+
+    elif data == "ask_delete":
+        await ask_delete(update, context)
+
+    elif data.startswith("confirm_del:"):
+        await confirm_number_delete(update, context)
+
+    elif data == "cancel_del":
+        await update.callback_query.message.delete()
 
 
 async def start_web_server():
@@ -725,7 +737,7 @@ async def main():
         # 2. Callback query handlers
         application.add_handler(CallbackQueryHandler(name_decision_handler, pattern="^(edit_name|continue_name)$"))
         application.add_handler(CallbackQueryHandler(get_movie_files, pattern="^movie_"))
-        application.add_handler(CallbackQueryHandler(callback_router, pattern="^(page:|del:|cancel:|confirm:)"))
+        application.add_handler(CallbackQueryHandler(callback_router))
 
         # 3. File/Photo upload handlers - ONLY in storage group
         application.add_handler(MessageHandler(
@@ -742,7 +754,12 @@ async def main():
             filters.TEXT & ~filters.COMMAND & filters.Chat(STORAGE_GROUP_ID),
             text_handler
         ))
-        
+        # 4. Text handler -(delete_by_number)
+        application.add_handler(MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            delete_by_number
+        ))
+
         # 5. Search handler - ONLY in search group
         application.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND & filters.Chat(SEARCH_GROUP_ID),
