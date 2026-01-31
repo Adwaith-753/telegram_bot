@@ -733,6 +733,41 @@ async def paginate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await list_movies(update, context)
 
 
+async def admin_command(update: Update, context: CallbackContext):
+    """Show all admin IDs and count."""
+    # Only allow admins to use this command
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("❌ This command is for admins only.")
+        return
+    
+    if not ADMIN_IDS:
+        await update.message.reply_text("❌ No admins configured.")
+        return
+    
+    # Count admins
+    admin_count = len(ADMIN_IDS)
+    
+    # Format admin list with numbers
+    admin_list = "\n".join([f"{i+1}. `{admin_id}`" for i, admin_id in enumerate(sorted(ADMIN_IDS))])
+    
+    # Get current user info
+    current_user = update.effective_user
+    is_current_admin = current_user.id in ADMIN_IDS
+    
+    message = (
+        f"👑 **Admin Information**\n\n"
+        f"📊 **Total Admins:** `{admin_count}`\n\n"
+        f"🆔 **Admin IDs:**\n{admin_list}\n\n"
+        f"👤 **Your ID:** `{current_user.id}`\n"
+        f"🏷 **Your Status:** {'**ADMIN** ✅' if is_current_admin else 'User'}"
+    )
+    
+    await update.message.reply_text(message, parse_mode="Markdown")
+
+    # Also log who used the command
+    log_admin_activity(current_user.id, "VIEWED_ADMIN_LIST", f"Total: {admin_count}")
+
+
 #Delete confirmation dialog
 async def confirm_number_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -839,6 +874,10 @@ async def main():
         application.add_handler(CommandHandler("id", id_command))
         application.add_handler(CommandHandler("list", list_movies))
 
+        # In your main() function, add this with other command handlers:
+        application.add_handler(CommandHandler("admin", admin_command))
+
+
         #MENU BUTTONS (/start menu)
         application.add_handler(CallbackQueryHandler(start_menu_router, pattern="^menu_"))
 
@@ -850,7 +889,6 @@ async def main():
 
         #LIST / DELETE / PAGINATION
         application.add_handler(CallbackQueryHandler(callback_router,pattern="^(page:|ask_delete|confirm_del:|cancel_del)"))
-
 
         # 3. File/Photo upload handlers - ONLY in storage group
         application.add_handler(MessageHandler(
