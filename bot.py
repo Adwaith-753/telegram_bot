@@ -606,7 +606,7 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = collection.count_documents({})
     movies = list(
         collection.find({})
-        .sort("name", 1)
+        .sort("_id", -1)
         .skip(skip)
         .limit(PAGE_SIZE)
     )
