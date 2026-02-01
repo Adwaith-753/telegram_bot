@@ -91,6 +91,11 @@ def connect_mongo():
 collection = connect_mongo()
 search_group_messages = []
 
+# Helper function to check admin status
+def is_admin(user_id: int) -> bool:
+    """Check if user is admin."""
+    return user_id in ADMIN_IDS
+
 # Helper function to sanitize Unicode text
 def sanitize_unicode(text):
     """
@@ -151,6 +156,14 @@ async def name_decision_handler(update: Update, context: CallbackContext):
     await query.answer()
 
     user_id = query.from_user.id
+    
+    # 🚫 RESTRICT TO ADMINS ONLY
+    if not is_admin(user_id):
+        await query.message.reply_text(
+            "❌ Only admins can edit movie names."
+        )
+        return
+    
     session = upload_sessions.get(user_id)
 
     if not session:
@@ -195,6 +208,11 @@ async def text_handler(update: Update, context: CallbackContext):
         return
 
     user_id = update.effective_user.id
+    
+    # 🚫 RESTRICT TO ADMINS ONLY
+    if not is_admin(user_id):
+        return
+
     session = upload_sessions.get(user_id)
 
     # Only accept text when waiting for edit
@@ -337,6 +355,13 @@ async def add_movie(update: Update, context: CallbackContext):
         return
 
     user_id = update.effective_user.id
+    
+    # 🚫 RESTRICT UPLOADS TO ADMINS ONLY
+    if not is_admin(user_id):
+        await update.message.reply_text(
+            "❌ Only admins can upload files."
+        )
+        return
 
     # Create or get upload session
     session = upload_sessions.setdefault(user_id, {
@@ -398,7 +423,8 @@ async def add_movie(update: Update, context: CallbackContext):
         )
 
         # 🔥 ASK EDIT / CONTINUE ONLY ONCE – FINAL STEP
-        if user_id in ADMIN_IDS and not session['name_confirmed']:
+        # Since only admins can upload, we always show Edit/Continue buttons
+        if not session['name_confirmed']:
             keyboard = InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton("✏️ Edit Name", callback_data="edit_name"),
@@ -414,8 +440,7 @@ async def add_movie(update: Update, context: CallbackContext):
                 reply_markup=keyboard
             )
         else:
-            # Non-admin or already confirmed name - save immediately
-            session['name_confirmed'] = True  # Mark as confirmed
+            # Already confirmed name - save immediately
             await check_and_save_movie(user_id, update, context)
 
 async def search_movie(update: Update, context: CallbackContext):
@@ -610,6 +635,7 @@ async def menu_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/search – Search movies\n"
         "/list – Admin movie list\n"
         "/id – Get IDs\n"
+        "/admin – Show admin info (admins only)\n"
     )
 
     keyboard = InlineKeyboardMarkup([
@@ -678,41 +704,9 @@ async def id_command(update: Update, context: CallbackContext):
     # Send the response back to the user
     await update.message.reply_text(response)
 
-# Define the /admin command handler
-async def admin_command(update: Update, context: CallbackContext):
-    """Show all admin IDs and count."""
-    # Only allow admins to use this command
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ This command is for admins only.")
-        return
-    
-    if not ADMIN_IDS:
-        await update.message.reply_text("❌ No admins configured.")
-        return
-    
-    # Count admins
-    admin_count = len(ADMIN_IDS)
-    
-    # Format admin list with numbers
-    admin_list = "\n".join([f"{i+1}. `{admin_id}`" for i, admin_id in enumerate(sorted(ADMIN_IDS))])
-    
-    # Get current user info
-    current_user = update.effective_user
-    is_current_admin = current_user.id in ADMIN_IDS
-    
-    message = (
-        f"👑 **Admin Information**\n\n"
-        f"📊 **Total Admins:** `{admin_count}`\n\n"
-        f"🆔 **Admin IDs:**\n{admin_list}\n\n"
-        f"👤 **Your ID:** `{current_user.id}`\n"
-        f"🏷 **Your Status:** {'**ADMIN** ✅' if is_current_admin else 'User'}"
-    )
-    
-    await update.message.reply_text(message, parse_mode="Markdown")
-
 # Define the /list command (paginated list)
 async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_admin(update.effective_user.id):
         return
 
     page = int(context.args[0]) if context.args else 1
@@ -783,7 +777,7 @@ async def ask_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def delete_by_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ✅ Only admins can delete
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_admin(update.effective_user.id):
         return
 
     # ✅ Must be a normal text message
@@ -843,6 +837,38 @@ async def paginate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.args = [str(page)]
     await list_movies(update, context)
+
+# Define the /admin command handler
+async def admin_command(update: Update, context: CallbackContext):
+    """Show all admin IDs and count."""
+    # Only allow admins to use this command
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ This command is for admins only.")
+        return
+    
+    if not ADMIN_IDS:
+        await update.message.reply_text("❌ No admins configured.")
+        return
+    
+    # Count admins
+    admin_count = len(ADMIN_IDS)
+    
+    # Format admin list with numbers
+    admin_list = "\n".join([f"{i+1}. `{admin_id}`" for i, admin_id in enumerate(sorted(ADMIN_IDS))])
+    
+    # Get current user info
+    current_user = update.effective_user
+    is_current_admin = is_admin(current_user.id)
+    
+    message = (
+        f"👑 **Admin Information**\n\n"
+        f"📊 **Total Admins:** `{admin_count}`\n\n"
+        f"🆔 **Admin IDs:**\n{admin_list}\n\n"
+        f"👤 **Your ID:** `{current_user.id}`\n"
+        f"🏷 **Your Status:** {'**ADMIN** ✅' if is_current_admin else 'User'}"
+    )
+    
+    await update.message.reply_text(message, parse_mode="Markdown")
 
 #Delete confirmation dialog
 async def confirm_number_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
