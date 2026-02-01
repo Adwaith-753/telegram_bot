@@ -137,56 +137,80 @@ upload_sessions = defaultdict(lambda: {
     'image': None, 
     'movie_name': None,
     'awaiting_name_edit': False,
+    'name_confirmed': False,
     'user_id': None
 })
 
 delete_sessions = {}
 
 async def name_decision_handler(update: Update, context: CallbackContext):
-    """Handle name editing decisions from inline buttons."""
+    """Handle Edit / Continue button actions."""
     query = update.callback_query
     await query.answer()
 
     user_id = query.from_user.id
     session = upload_sessions.get(user_id)
-    
+
     if not session:
-        await query.message.reply_text("❌ Session expired. Please restart the upload process.")
+        await query.message.reply_text(
+            "❌ Session expired. Please upload again."
+        )
         return
 
+    # ✏️ EDIT NAME
     if query.data == "edit_name":
         session['awaiting_name_edit'] = True
-        await query.message.reply_text("✏️ Please send the new movie name:")
 
+        await query.message.reply_text(
+            "✏️ Please send the new movie name:"
+        )
+        return
+
+    # ✅ CONTINUE
     elif query.data == "continue_name":
         session['awaiting_name_edit'] = False
-        await query.message.reply_text(f"✅ Name confirmed: **{session['movie_name']}**", parse_mode="Markdown")
-        
-        # Check if we can save the movie now
+        session['name_confirmed'] = True   # 🔥 IMPORTANT
+
+        await query.message.reply_text(
+            f"✅ Name confirmed:\n\n**{session['movie_name']}**",
+            parse_mode="Markdown"
+        )
+
+        # Save movie if everything is ready
         await check_and_save_movie(user_id, update, context)
 
 async def text_handler(update: Update, context: CallbackContext):
-    """Handle text messages for movie name editing - ONLY IN STORAGE GROUP."""
-    # Only handle in storage group
+    """Handle movie name input after Edit button."""
+    
+    # Only process in storage group
     if update.effective_chat.id != STORAGE_GROUP_ID:
         return
-    
+
     user_id = update.effective_user.id
     session = upload_sessions.get(user_id)
-    
-    if session and session['awaiting_name_edit']:
-        new_name = sanitize_unicode(update.message.text.strip())
-        session['movie_name'] = new_name
-        session['awaiting_name_edit'] = False
-        
-        await update.message.reply_text(
-            f"✅ Movie name updated to:\n\n**{new_name}**",
-            parse_mode="Markdown"
-        )
-        
-        # Check if we can save the movie now
-        await check_and_save_movie(user_id, update, context)
+
+    # Only accept text when waiting for edit
+    if not session or not session.get('awaiting_name_edit'):
         return
+
+    new_name = sanitize_unicode(update.message.text.strip())
+
+    if not new_name:
+        await update.message.reply_text("❌ Movie name cannot be empty.")
+        return
+
+    # Save edited name
+    session['movie_name'] = new_name
+    session['awaiting_name_edit'] = False
+    session['name_confirmed'] = True   # 🔥 IMPORTANT
+
+    await update.message.reply_text(
+        f"✅ Movie name updated to:\n\n**{new_name}**",
+        parse_mode="Markdown"
+    )
+
+    # Save movie if everything is ready
+    await check_and_save_movie(user_id, update, context)
 
 async def check_and_save_movie(user_id, update, context):
     """Check if all conditions are met and save the movie to database."""
@@ -259,69 +283,85 @@ async def send_preview_to_group(movie_entry, context):
         logging.error(f"Error sending preview for {sanitize_unicode(name)}: {sanitize_unicode(str(e))}")
 
 async def add_movie(update: Update, context: CallbackContext):
-    """Process movie uploads, cleaning filenames and managing sessions."""
-    
+    """Process movie uploads. Ask Edit/Continue ONLY when image is uploaded."""
+
+    # Only allow in storage group
     if update.effective_chat.id != STORAGE_GROUP_ID:
         return
 
     user_id = update.effective_user.id
+
+    # Create or get upload session
     session = upload_sessions.setdefault(user_id, {
-        'files': [], 
-        'image': None, 
+        'files': [],
+        'image': None,
         'movie_name': None,
-        'awaiting_name_edit': False
+        'awaiting_name_edit': False,
+        'name_confirmed': False
     })
-    
-    # Handle document (movie file) upload
+
+    # =========================
+    # 📁 HANDLE DOCUMENT UPLOAD
+    # =========================
     if update.message.document:
         file_info = update.message.document
         cleaned_name = clean_filename(file_info.file_name)
-        
+
         session['files'].append({
             'file_id': file_info.file_id,
             'file_name': cleaned_name
         })
-        
-        # Set the movie name from the first file
+
+        # Set movie name from first file only
         if not session['movie_name']:
             session['movie_name'] = cleaned_name
-        
-        # If user is admin, show edit options
-        if user_id in ADMIN_IDS:
-            keyboard = [
-                [
-                    InlineKeyboardButton("✏️ Edit Name", callback_data="edit_name"),
-                    InlineKeyboardButton("✅ Continue", callback_data="continue_name")
-                ]
-            ]
-            await update.message.reply_text(
-                sanitize_unicode(f"🎬 Detected Movie Name:\n\n**{cleaned_name}**\n\nEdit or continue?"),
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        else:
-            await update.message.reply_text(
-                sanitize_unicode(f"✅ File received: {cleaned_name}")
-            )
-            # For non-admin, check if we can save
-            await check_and_save_movie(user_id, update, context)
-    
-    # Handle photo upload
+
+        # ✅ NO EDIT / CONTINUE HERE
+        await update.message.reply_text(
+            sanitize_unicode(f"➕ File added: {cleaned_name}")
+        )
+        return
+
+    # ======================
+    # 🖼️ HANDLE IMAGE UPLOAD
+    # ======================
     elif update.message.photo:
-        image_info = update.message.photo
-        largest_photo = max(image_info, key=lambda photo: photo.width * photo.height)
-        
+        largest_photo = max(
+            update.message.photo,
+            key=lambda p: p.width * p.height
+        )
+
         session['image'] = {
             'file_id': largest_photo.file_id,
             'width': largest_photo.width,
             'height': largest_photo.height
         }
-        
-        await update.message.reply_text(sanitize_unicode("🖼 Image received"))
-        
-        # Check if we can save (for non-admin or when not editing)
-        if user_id not in ADMIN_IDS or not session['awaiting_name_edit']:
-            await check_and_save_movie(user_id, update, context)
+
+        await update.message.reply_text(
+            sanitize_unicode("🖼 Image received")
+        )
+
+        # 🔥 ASK EDIT / CONTINUE ONLY ONCE – FINAL STEP
+        if user_id in ADMIN_IDS and not session['name_confirmed']:
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("✏️ Edit Name", callback_data="edit_name"),
+                    InlineKeyboardButton("✅ Continue", callback_data="continue_name")
+                ]
+            ])
+
+            await update.message.reply_text(
+                sanitize_unicode(
+                    f"🎬 Detected Movie Name:\n\n**{session['movie_name']}**\n\nEdit or continue?"
+                ),
+                parse_mode="Markdown",
+                reply_markup=keyboard
+            )
+            return
+
+        # Non-admin or already confirmed
+        await check_and_save_movie(user_id, update, context)
+
                
 async def search_movie(update: Update, context: CallbackContext):
     """
