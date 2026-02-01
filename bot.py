@@ -537,6 +537,7 @@ async def check_and_save_movie(user_id, update, context):
                 chat_id=user_id,
                 text=sanitize_unicode("❌ Failed to add the movie. Please try again later.")
             )
+            
 
 async def send_preview_to_group(movie_entry, context):
     """Send the movie preview to the search group."""
@@ -827,7 +828,6 @@ async def menu_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "📌 **Available Commands**\n\n"
         "/start – Start bot\n"
-        "/search – Search movies\n"
         "/list – Admin movie list (PM only)\n"
         "/id – Get IDs\n"
         "/admin – Show admin info (PM only)\n"
