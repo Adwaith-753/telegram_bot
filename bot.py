@@ -138,6 +138,7 @@ upload_sessions = defaultdict(lambda: {
     'movie_name': None,
     'awaiting_name_edit': False,
     'name_confirmed': False,
+    'saved': False,
     'user_id': None
 })
 
@@ -214,20 +215,28 @@ async def text_handler(update: Update, context: CallbackContext):
 
 async def check_and_save_movie(user_id, update, context):
     """Check if all conditions are met and save the movie to database."""
+
     session = upload_sessions.get(user_id)
-    
+
     if not session:
         return
-    
+
+    # 🚫 Prevent double save
+    if session.get('saved'):
+        return
+
     # Check if we have all required data
     if not (session['files'] and session['image'] and session['movie_name']):
         return
-    
+
+    # 🔒 Mark as saved BEFORE DB insert (important)
+    session['saved'] = True
+
     # Create movie entry
     movie_id = str(uuid.uuid4())
     movie_entry = {
         'movie_id': movie_id,
-        'name': session['movie_name'],  # This uses the EDITED name
+        'name': session['movie_name'],
         'media': {
             'documents': session['files'],
             'image': session['image']
@@ -236,6 +245,7 @@ async def check_and_save_movie(user_id, update, context):
 
     try:
         collection.insert_one(movie_entry)
+
         await update.message.reply_text(
             sanitize_unicode(f"✅ Successfully added movie: {session['movie_name']}")
         )
@@ -246,12 +256,16 @@ async def check_and_save_movie(user_id, update, context):
 
         # Clear the session
         del upload_sessions[user_id]
-        
+
     except Exception as e:
+        # 🔓 Rollback save flag on failure
+        session['saved'] = False
+
         logging.error(f"Database error: {str(e)}")
         await update.message.reply_text(
             sanitize_unicode("❌ Failed to add the movie. Please try again later.")
         )
+
 
 async def send_preview_to_group(movie_entry, context):
     """Send the movie preview to the search group."""
@@ -297,7 +311,8 @@ async def add_movie(update: Update, context: CallbackContext):
         'image': None,
         'movie_name': None,
         'awaiting_name_edit': False,
-        'name_confirmed': False
+        'name_confirmed': False,
+        'saved': False      # ✅ REQUIRED
     })
 
     # =========================
@@ -326,6 +341,14 @@ async def add_movie(update: Update, context: CallbackContext):
     # 🖼️ HANDLE IMAGE UPLOAD
     # ======================
     elif update.message.photo:
+
+        # ❌ Block image before files
+        if not session['files']:
+            await update.message.reply_text(
+                "📂 Please upload movie files before the image."
+            )
+            return
+
         largest_photo = max(
             update.message.photo,
             key=lambda p: p.width * p.height
@@ -361,6 +384,7 @@ async def add_movie(update: Update, context: CallbackContext):
 
         # Non-admin or already confirmed
         await check_and_save_movie(user_id, update, context)
+
 
                
 async def search_movie(update: Update, context: CallbackContext):
