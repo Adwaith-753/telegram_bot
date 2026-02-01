@@ -50,6 +50,7 @@ STORAGE_GROUP_ID = int(os.getenv('STORAGE_GROUP_ID'))
 ADMIN_IDS = set(int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip())
 PORT = int(os.getenv('PORT', 8088))  # Default to 8088 if not set
 PAGE_SIZE = 10
+
 # Logging Configuration
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -178,13 +179,19 @@ async def name_decision_handler(update: Update, context: CallbackContext):
         )
 
         # Save movie if everything is ready
-        await check_and_save_movie(user_id, update, context)
+        # Check that we have all required data before saving
+        if session['files'] and session['image']:
+            await check_and_save_movie(user_id, update, context)
 
 async def text_handler(update: Update, context: CallbackContext):
     """Handle movie name input after Edit button."""
     
     # Only process in storage group
     if update.effective_chat.id != STORAGE_GROUP_ID:
+        return
+
+    # Make sure we have a message
+    if not update.message:
         return
 
     user_id = update.effective_user.id
@@ -211,7 +218,8 @@ async def text_handler(update: Update, context: CallbackContext):
     )
 
     # Save movie if everything is ready
-    await check_and_save_movie(user_id, update, context)
+    if session['files'] and session['image']:
+        await check_and_save_movie(user_id, update, context)
 
 async def check_and_save_movie(user_id, update, context):
     """Check if all conditions are met and save the movie to database."""
@@ -246,9 +254,23 @@ async def check_and_save_movie(user_id, update, context):
     try:
         collection.insert_one(movie_entry)
 
-        await update.message.reply_text(
-            sanitize_unicode(f"✅ Successfully added movie: {session['movie_name']}")
-        )
+        # Use the proper way to send message based on update type
+        if update.callback_query:
+            # For callback queries (Edit/Continue buttons)
+            await update.callback_query.message.reply_text(
+                sanitize_unicode(f"✅ Successfully added movie: {session['movie_name']}")
+            )
+        elif update.message:
+            # For regular messages (non-admin uploads)
+            await update.message.reply_text(
+                sanitize_unicode(f"✅ Successfully added movie: {session['movie_name']}")
+            )
+        else:
+            # Fallback - try to send to user directly
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=sanitize_unicode(f"✅ Successfully added movie: {session['movie_name']}")
+            )
 
         # Send preview to search group
         if SEARCH_GROUP_ID:
@@ -262,10 +284,21 @@ async def check_and_save_movie(user_id, update, context):
         session['saved'] = False
 
         logging.error(f"Database error: {str(e)}")
-        await update.message.reply_text(
-            sanitize_unicode("❌ Failed to add the movie. Please try again later.")
-        )
-
+        
+        # Use the proper way to send error message
+        if update.callback_query:
+            await update.callback_query.message.reply_text(
+                sanitize_unicode("❌ Failed to add the movie. Please try again later.")
+            )
+        elif update.message:
+            await update.message.reply_text(
+                sanitize_unicode("❌ Failed to add the movie. Please try again later.")
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=sanitize_unicode("❌ Failed to add the movie. Please try again later.")
+            )
 
 async def send_preview_to_group(movie_entry, context):
     """Send the movie preview to the search group."""
@@ -380,13 +413,11 @@ async def add_movie(update: Update, context: CallbackContext):
                 parse_mode="Markdown",
                 reply_markup=keyboard
             )
-            return
+        else:
+            # Non-admin or already confirmed name - save immediately
+            session['name_confirmed'] = True  # Mark as confirmed
+            await check_and_save_movie(user_id, update, context)
 
-        # Non-admin or already confirmed
-        await check_and_save_movie(user_id, update, context)
-
-
-               
 async def search_movie(update: Update, context: CallbackContext):
     """
     Search for a movie in the database and send preview to group.
@@ -512,9 +543,6 @@ async def get_movie_files(update: Update, context: CallbackContext):
             sanitize_unicode("❌ An error occurred while fetching the movie files.")
         )
 
-
-
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     bot_name = context.bot.first_name
@@ -572,8 +600,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.callback_query.message.edit_text(text, reply_markup=keyboard)
 
-
-
 async def menu_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -592,8 +618,6 @@ async def menu_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
 
-
-
 async def menu_source(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -608,7 +632,6 @@ async def menu_source(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
 
     await query.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
-
 
 async def menu_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -632,17 +655,13 @@ async def menu_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.message.edit_text(text, reply_markup=keyboard)
 
-
 async def menu_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.message.delete()
 
-
 async def menu_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start(update, context)
-
-
 
 # Define the /id command handler
 async def id_command(update: Update, context: CallbackContext):
@@ -658,6 +677,38 @@ async def id_command(update: Update, context: CallbackContext):
 
     # Send the response back to the user
     await update.message.reply_text(response)
+
+# Define the /admin command handler
+async def admin_command(update: Update, context: CallbackContext):
+    """Show all admin IDs and count."""
+    # Only allow admins to use this command
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("❌ This command is for admins only.")
+        return
+    
+    if not ADMIN_IDS:
+        await update.message.reply_text("❌ No admins configured.")
+        return
+    
+    # Count admins
+    admin_count = len(ADMIN_IDS)
+    
+    # Format admin list with numbers
+    admin_list = "\n".join([f"{i+1}. `{admin_id}`" for i, admin_id in enumerate(sorted(ADMIN_IDS))])
+    
+    # Get current user info
+    current_user = update.effective_user
+    is_current_admin = current_user.id in ADMIN_IDS
+    
+    message = (
+        f"👑 **Admin Information**\n\n"
+        f"📊 **Total Admins:** `{admin_count}`\n\n"
+        f"🆔 **Admin IDs:**\n{admin_list}\n\n"
+        f"👤 **Your ID:** `{current_user.id}`\n"
+        f"🏷 **Your Status:** {'**ADMIN** ✅' if is_current_admin else 'User'}"
+    )
+    
+    await update.message.reply_text(message, parse_mode="Markdown")
 
 # Define the /list command (paginated list)
 async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -712,7 +763,6 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text, reply_markup=reply_markup, parse_mode="Markdown"
         )
 
-
 async def ask_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -730,7 +780,6 @@ async def ask_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✏️ **Send the movie number to delete (1–{count})**",
         parse_mode="Markdown"
     )
-
 
 async def delete_by_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ✅ Only admins can delete
@@ -785,7 +834,6 @@ async def delete_by_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-
 # Pagination handler
 async def paginate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -795,42 +843,6 @@ async def paginate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.args = [str(page)]
     await list_movies(update, context)
-
-
-async def admin_command(update: Update, context: CallbackContext):
-    """Show all admin IDs and count."""
-    # Only allow admins to use this command
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ This command is for admins only.")
-        return
-    
-    if not ADMIN_IDS:
-        await update.message.reply_text("❌ No admins configured.")
-        return
-    
-    # Count admins
-    admin_count = len(ADMIN_IDS)
-    
-    # Format admin list with numbers
-    admin_list = "\n".join([f"{i+1}. `{admin_id}`" for i, admin_id in enumerate(sorted(ADMIN_IDS))])
-    
-    # Get current user info
-    current_user = update.effective_user
-    is_current_admin = current_user.id in ADMIN_IDS
-    
-    message = (
-        f"👑 **Admin Information**\n\n"
-        f"📊 **Total Admins:** `{admin_count}`\n\n"
-        f"🆔 **Admin IDs:**\n{admin_list}\n\n"
-        f"👤 **Your ID:** `{current_user.id}`\n"
-        f"🏷 **Your Status:** {'**ADMIN** ✅' if is_current_admin else 'User'}"
-    )
-    
-    await update.message.reply_text(message, parse_mode="Markdown")
-
-    # Also log who used the command
-    log_admin_activity(current_user.id, "VIEWED_ADMIN_LIST", f"Total: {admin_count}")
-
 
 #Delete confirmation dialog
 async def confirm_number_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -845,7 +857,6 @@ async def confirm_number_delete(update: Update, context: ContextTypes.DEFAULT_TY
 
     context.args = [page]
     await list_movies(update, context)
-
 
 # Callback router
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -863,7 +874,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "cancel_del":
         await update.callback_query.message.delete()
 
-
 async def start_menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = update.callback_query.data
 
@@ -877,7 +887,6 @@ async def start_menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await menu_status(update, context)
     elif data == "menu_close":
         await menu_close(update, context)
-
 
 async def start_web_server():
     """Start a web server for health checks."""
@@ -937,21 +946,18 @@ async def main():
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("id", id_command))
         application.add_handler(CommandHandler("list", list_movies))
-
-        # In your main() function, add this with other command handlers:
         application.add_handler(CommandHandler("admin", admin_command))
 
-
-        #MENU BUTTONS (/start menu)
+        # MENU BUTTONS (/start menu)
         application.add_handler(CallbackQueryHandler(start_menu_router, pattern="^menu_"))
 
-        #MOVIE UPLOAD NAME EDIT
+        # MOVIE UPLOAD NAME EDIT
         application.add_handler(CallbackQueryHandler(name_decision_handler, pattern="^(edit_name|continue_name)$"))
 
-        #MOVIE DOWNLOAD BUTTON
+        # MOVIE DOWNLOAD BUTTON
         application.add_handler(CallbackQueryHandler(get_movie_files, pattern="^movie_"))
 
-        #LIST / DELETE / PAGINATION
+        # LIST / DELETE / PAGINATION
         application.add_handler(CallbackQueryHandler(callback_router,pattern="^(page:|ask_delete|confirm_del:|cancel_del)"))
 
         # 3. File/Photo upload handlers - ONLY in storage group
@@ -969,13 +975,13 @@ async def main():
             filters.TEXT & ~filters.COMMAND & filters.Chat(STORAGE_GROUP_ID),
             text_handler
         ))
-        # 4. Text handler -(delete_by_number)
+        # 5. Text handler -(delete_by_number)
         application.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             delete_by_number
         ))
 
-        # 5. Search handler - ONLY in search group
+        # 6. Search handler - ONLY in search group
         application.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND & filters.Chat(SEARCH_GROUP_ID),
             search_movie
