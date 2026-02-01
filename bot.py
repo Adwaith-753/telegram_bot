@@ -908,11 +908,19 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # 🔴 RESTRICT TO PRIVATE CHATS ONLY
-    if update.effective_chat.type != "private":
-        await update.message.reply_text(
-            "❌ This command works only in private chat with the bot."
-        )
-        return
+    # Check if this is a callback query (button click) or regular message
+    if update.message:
+        if update.effective_chat.type != "private":
+            await update.message.reply_text(
+                "❌ This command works only in private chat with the bot."
+            )
+            return
+    elif update.callback_query:
+        if update.callback_query.message.chat.type != "private":
+            await update.callback_query.answer("❌ This command works only in private chat.")
+            return
+    else:
+        return  # Neither message nor callback query
 
     page = int(context.args[0]) if context.args else 1
     skip = (page - 1) * PAGE_SIZE
@@ -955,7 +963,13 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    # Handle both message and callback query cases
+    if update.message:
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    elif update.callback_query:
+        await update.callback_query.message.edit_text(
+            text, reply_markup=reply_markup, parse_mode="Markdown"
+        )
 
 async def ask_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1098,10 +1112,13 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("page:"):
         await paginate(update, context)
+
     elif data == "ask_delete":
         await ask_delete(update, context)
+
     elif data.startswith("confirm_del:"):
         await confirm_number_delete(update, context)
+
     elif data == "cancel_del":
         await update.callback_query.message.delete()
 
