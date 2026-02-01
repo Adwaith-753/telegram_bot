@@ -24,7 +24,6 @@ from bson import ObjectId
 # Custom Timezone Formatter
 class TimezoneFormatter(logging.Formatter):
     def formatTime(self, record, datefmt=None):
-        # Use Indian Standard Time (IST)
         ist = pytz.timezone('Asia/Kolkata')
         ct = datetime.datetime.fromtimestamp(record.created, ist)
         if datefmt:
@@ -36,10 +35,7 @@ class TimezoneFormatter(logging.Formatter):
                 s = ct.isoformat()
         return s
         
-# Apply nest_asyncio for environments like Jupyter
 nest_asyncio.apply()
-
-# Load environment variables
 load_dotenv()
 
 # Configuration
@@ -48,21 +44,20 @@ DB_URL = os.getenv('DB_URL')
 SEARCH_GROUP_ID = int(os.getenv('SEARCH_GROUP_ID'))
 STORAGE_GROUP_ID = int(os.getenv('STORAGE_GROUP_ID'))
 ADMIN_IDS = set(int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip())
-PORT = int(os.getenv('PORT', 8088))  # Default to 8088 if not set
+PORT = int(os.getenv('PORT', 8088))
 PAGE_SIZE = 10
 
 # Logging Configuration
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
-    datefmt='%Y-%m-%d %H:%M:%S %Z',  # Include timezone in the date format
+    datefmt='%Y-%m-%d %H:%M:%S %Z',
     handlers=[
-        logging.StreamHandler(),  # Console output
-        logging.FileHandler('bot.log', encoding='utf-8')  # Log to file
+        logging.StreamHandler(),
+        logging.FileHandler('bot.log', encoding='utf-8')
     ]
 )
 
-# Get the root logger and apply the custom formatter
 logger = logging.getLogger()
 for handler in logger.handlers:
     handler.setFormatter(TimezoneFormatter(
@@ -98,44 +93,62 @@ def is_admin(user_id: int) -> bool:
 
 # Helper function to sanitize Unicode text
 def sanitize_unicode(text):
-    """
-    Sanitize Unicode text to remove invalid characters, such as surrogate pairs.
-    """
     return text.encode('utf-8', 'ignore').decode('utf-8')
 
 # Clean filename function
 def clean_filename(filename):
-    """Clean the uploaded filename by removing unnecessary tags and extracting relevant details."""
-    # Remove text inside square brackets (like [CK], [1080p])
+    """Clean the uploaded filename by removing unnecessary tags."""
     filename = re.sub(r'\[.*?\]', '', filename)
-
-    # Remove prefixes like @TamilMob_LinkZz and leading special characters
-    filename = re.sub(r'^[@\W_]+', '', filename)  # Removes @, -, _, spaces at the start
-
-    # Remove emojis and special characters
+    filename = re.sub(r'^[@\W_]+', '', filename)
     filename = re.sub(r'[^\x00-\x7F]+', '', filename)
-
-    # Replace underscores with spaces
     filename = re.sub(r'[_\s]+', ' ', filename).strip()
-
-    # Remove unwanted tags
+    
     pattern = r'(?i)(HDRip|10bit|x264|AAC\d*|MB|AMZN|WEB-DL|WEBRip|HEVC|x265|ESub|HQ|\.mkv|\.mp4|\.avi|\.mov|BluRay|DVDRip|720p|1080p|540p|SD|HD|CAM|DVDScr|R5|TS|Rip|BRRip|AC3|DualAudio|6CH|v\d+)(\W|$)'
     filename = re.sub(pattern, ' ', filename).strip()
-
-    # Extract movie name, year, and language
+    
     match = re.search(r'^(.*?)[\s_]*\(?(\d{4})\)?[\s_]*(Malayalam|Tamil|Hindi|Telugu|English)?', filename, re.IGNORECASE)
-
+    
     if match:
-        name = match.group(1).strip(" -._")  # Remove extra special characters
+        name = match.group(1).strip(" -._")
         year = match.group(2).strip() if match.group(2) else ""
         language = match.group(3).strip() if match.group(3) else ""
-
-        # Format the cleaned name
         cleaned_name = f"{name} ({year}) {language}".strip()
-        return re.sub(r'\s+', ' ', cleaned_name)  # Remove extra spaces
-
-    # If no match is found, return the cleaned filename
+        return re.sub(r'\s+', ' ', cleaned_name)
+    
     return filename.strip(" -._")
+
+# Helper function to extract language from filename
+def extract_language_from_filename(filename):
+    """Extract language from filename."""
+    filename_lower = filename.lower()
+    
+    # Check for language patterns
+    languages = {
+        'hindi': 'Hindi',
+        'tamil': 'Tamil', 
+        'malayalam': 'Malayalam',
+        'telugu': 'Telugu',
+        'english': 'English',
+        'eng': 'English',
+        'hin': 'Hindi',
+        'tam': 'Tamil',
+        'mal': 'Malayalam',
+        'tel': 'Telugu'
+    }
+    
+    for lang_key, lang_name in languages.items():
+        if lang_key in filename_lower:
+            return lang_name
+    
+    # Check parentheses format: Movie Name (2023) Hindi
+    match = re.search(r'\((?:19|20)\d{2}\)\s*([A-Za-z]+)', filename)
+    if match:
+        possible_lang = match.group(1).lower()
+        for lang_key, lang_name in languages.items():
+            if lang_key == possible_lang:
+                return lang_name
+    
+    return 'Unknown'
 
 # Temporary storage for incomplete movie uploads
 upload_sessions = defaultdict(lambda: {
@@ -149,6 +162,213 @@ upload_sessions = defaultdict(lambda: {
 })
 
 delete_sessions = {}
+
+# ============================
+# LANGUAGE SELECTION HANDLERS
+# ============================
+
+async def show_language_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, movie_id: str):
+    """Show language selection buttons to user."""
+    
+    movie = collection.find_one({"movie_id": movie_id})
+    
+    if not movie:
+        await update.message.reply_text("❌ Movie not found.")
+        return
+    
+    name = movie.get('name', 'Unknown Movie')
+    media = movie.get('media', {})
+    documents = media.get('documents', [])
+    
+    # Get unique languages
+    languages = set()
+    for doc in documents:
+        lang = doc.get('language', 'Unknown')
+        if lang != 'Unknown':
+            languages.add(lang)
+    
+    # If no languages detected, show "All Files" only
+    if not languages:
+        keyboard = [[InlineKeyboardButton("📦 All Files", callback_data=f"lang_{movie_id}_all")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        image_file_id = media.get('image', {}).get('file_id')
+        if image_file_id:
+            await update.message.reply_photo(
+                photo=image_file_id,
+                caption=f"**{name}**\n\nNo language tags detected. Showing all files:",
+                parse_mode="Markdown",
+                reply_markup=reply_markup
+            )
+        else:
+            await update.message.reply_text(
+                f"**{name}**\n\nNo language tags detected. Showing all files:",
+                parse_mode="Markdown",
+                reply_markup=reply_markup
+            )
+        return
+    
+    # Create language buttons (2 per row) - NO COUNT
+    keyboard = []
+    row = []
+    
+    for lang in sorted(languages):
+        button = InlineKeyboardButton(
+            f"{lang}",
+            callback_data=f"lang_{movie_id}_{lang}"
+        )
+        row.append(button)
+        
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    
+    if row:
+        keyboard.append(row)
+    
+    # Add "All Files" button - NO COUNT
+    keyboard.append([InlineKeyboardButton(
+        "📦 All Files",
+        callback_data=f"lang_{movie_id}_all"
+    )])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Send movie poster with language selection
+    image_file_id = media.get('image', {}).get('file_id')
+    
+    if image_file_id:
+        await update.message.reply_photo(
+            photo=image_file_id,
+            caption=f"**{name}**\n\nSelect language:",
+            parse_mode="Markdown",
+            reply_markup=reply_markup
+        )
+    else:
+        await update.message.reply_text(
+            f"**{name}**\n\nSelect language:",
+            parse_mode="Markdown",
+            reply_markup=reply_markup
+        )
+
+async def send_language_files(update: Update, context: ContextTypes.DEFAULT_TYPE, 
+                            movie_id: str, language: str):
+    """Send files of specific language to user."""
+    
+    # Handle callback query (if clicked from buttons)
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        chat_id = query.message.chat_id
+        message_id = query.message.message_id
+    else:
+        # Handle deep link
+        chat_id = update.effective_chat.id
+        message_id = None
+    
+    movie = collection.find_one({"movie_id": movie_id})
+    
+    if not movie:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ Movie not found."
+        )
+        return
+    
+    name = movie.get('name', 'Unknown Movie')
+    media = movie.get('media', {})
+    documents = media.get('documents', [])
+    
+    # Filter documents by language
+    if language != "all":
+        filtered_docs = [doc for doc in documents if doc.get('language') == language]
+    else:
+        filtered_docs = documents
+    
+    if not filtered_docs:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"❌ No {language} files found for this movie."
+        )
+        return
+    
+    # Send starting message
+    if language == "all":
+        lang_text = "all files"
+    else:
+        lang_text = f"{language} files"
+    
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"📤 Sending **{lang_text}** for:\n\n**{name}**",
+        parse_mode="Markdown"
+    )
+    
+    # Send each document
+    sent_count = 0
+    for doc in filtered_docs:
+        document_file_id = doc.get('file_id')
+        document_file_name = doc.get('file_name', 'movie_file')
+        doc_language = doc.get('language', 'Unknown')
+        
+        if document_file_id:
+            try:
+                # Add language emoji to caption
+                lang_emoji = {
+                    'Hindi': '🇮🇳',
+                    'Tamil': '🇮🇳',
+                    'Malayalam': '🇮🇳',
+                    'Telugu': '🇮🇳',
+                    'English': '🇺🇸'
+                }.get(doc_language, '🎬')
+                
+                await context.bot.send_document(
+                    chat_id=chat_id,
+                    document=document_file_id,
+                    caption=f"{lang_emoji} {document_file_name}"
+                )
+                sent_count += 1
+                
+                # Small delay to avoid rate limits
+                await asyncio.sleep(0.5)
+                
+            except Exception as e:
+                logging.error(f"Error sending document: {sanitize_unicode(str(e))}")
+    
+    # Send completion message
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"✅ Successfully sent **{sent_count} file(s)**!"
+    )
+    
+    # Delete the language selection message (if it was a callback)
+    if update.callback_query and message_id:
+        try:
+            await context.bot.delete_message(
+                chat_id=chat_id,
+                message_id=message_id
+            )
+        except:
+            pass  # Ignore if can't delete
+
+async def language_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle language selection callback queries."""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    
+    if data.startswith("lang_"):
+        # Format: lang_{movie_id}_{language}
+        parts = data.split("_")
+        if len(parts) >= 3:
+            movie_id = parts[1]
+            language = "_".join(parts[2:])  # In case language has underscores
+            await send_language_files(update, context, movie_id, language)
+
+# ============================
+# UPLOAD HANDLERS
+# ============================
 
 async def name_decision_handler(update: Update, context: CallbackContext):
     """Handle Edit / Continue button actions."""
@@ -323,8 +543,9 @@ async def send_preview_to_group(movie_entry, context):
     name = movie_entry.get('name', 'Unknown Movie')
     media = movie_entry.get('media', {})
     image_file_id = media.get('image', {}).get('file_id')
-    deep_link = f"https://t.me/{context.bot.username}?start={movie_entry['movie_id']}"
+    deep_link = f"https://t.me/{context.bot.username}?start=select_{movie_entry['movie_id']}"
 
+    # SIMPLE DOWNLOAD BUTTON (no count)
     keyboard = [[InlineKeyboardButton("🎬 Download", url=deep_link)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -379,10 +600,14 @@ async def add_movie(update: Update, context: CallbackContext):
     if update.message.document:
         file_info = update.message.document
         cleaned_name = clean_filename(file_info.file_name)
-
+        
+        # Extract language
+        language = extract_language_from_filename(cleaned_name)
+        
         session['files'].append({
             'file_id': file_info.file_id,
-            'file_name': cleaned_name
+            'file_name': cleaned_name,
+            'language': language  # Add language
         })
 
         # Set movie name from first file only
@@ -423,7 +648,6 @@ async def add_movie(update: Update, context: CallbackContext):
         )
 
         # 🔥 ASK EDIT / CONTINUE ONLY ONCE – FINAL STEP
-        # Since only admins can upload, we always show Edit/Continue buttons
         if not session['name_confirmed']:
             keyboard = InlineKeyboardMarkup([
                 [
@@ -443,10 +667,13 @@ async def add_movie(update: Update, context: CallbackContext):
             # Already confirmed name - save immediately
             await check_and_save_movie(user_id, update, context)
 
+# ============================
+# SEARCH HANDLER
+# ============================
+
 async def search_movie(update: Update, context: CallbackContext):
     """
     Search for a movie in the database and send preview to group.
-    Clicking the deep link opens the bot's PM, where the user can download files.
     """
     # Validate the command usage - ONLY IN SEARCH GROUP
     if update.effective_chat.id != SEARCH_GROUP_ID:
@@ -462,7 +689,6 @@ async def search_movie(update: Update, context: CallbackContext):
 
     try:
         # Search for the movie in the database
-        # Search by the EDITED name that was saved in DB
         regex_pattern = re.compile(re.escape(movie_name), re.IGNORECASE)
         results = list(collection.find({"name": {"$regex": regex_pattern}}).limit(10))
 
@@ -472,17 +698,12 @@ async def search_movie(update: Update, context: CallbackContext):
                 name = result.get('name', 'Unknown Movie')
                 media = result.get('media', {})
                 image_file_id = media.get('image', {}).get('file_id')
-
-                # Generate a direct deep link for bot PM with the movie ID
-                deep_link = f"https://t.me/{context.bot.username}?start={result['movie_id']}"
-
-                # Create an inline keyboard for the deep link
-                keyboard = [
-                    [InlineKeyboardButton(
-                        "🎬 Download", 
-                        url=deep_link
-                    )],
-                ]
+                
+                # Create callback data with movie_id
+                deep_link = f"https://t.me/{context.bot.username}?start=select_{result['movie_id']}"
+                
+                # SIMPLE DOWNLOAD BUTTON (no count)
+                keyboard = [[InlineKeyboardButton("🎬 Download", url=deep_link)]]
                 reply_markup = InlineKeyboardMarkup(keyboard)
 
                 # Send movie preview with an image if available
@@ -518,62 +739,32 @@ async def search_movie(update: Update, context: CallbackContext):
             sanitize_unicode("❌ An unexpected error occurred. Please try again later.")
         )
 
-# New handler for retrieving movie files
-async def get_movie_files(update: Update, context: CallbackContext):
-    """Send movie files to user via private message."""
-    query = update.callback_query
-    await query.answer()
-
-    # Extract movie ID from callback data
-    movie_id = query.data.split('_')[1]
-
-    try:
-        # Fetch movie details from database
-        movie = collection.find_one({"movie_id": movie_id})
-        
-        if movie and 'media' in movie and 'documents' in movie['media']:
-            # Send a message to the user
-            await query.message.reply_text(
-                sanitize_unicode(f"📤 Sending files for **{movie.get('name', 'Movie')}**"),
-                parse_mode="Markdown"
-            )
-
-            # Send each document related to the movie
-            for doc in movie['media']['documents']:
-                document_file_id = doc.get('file_id')
-                document_file_name = doc.get('file_name', 'movie_file')
-                
-                if document_file_id:
-                    try:
-                        await context.bot.send_document(
-                            chat_id=query.from_user.id,
-                            document=document_file_id,
-                            caption=sanitize_unicode(f"🎥 {document_file_name}")
-                        )
-                    except Exception as e:
-                        logging.error(f"Error sending document: {sanitize_unicode(str(e))}")
-            
-            # Optional: Send a completion message
-            await query.message.reply_text(
-                sanitize_unicode("✅ All files have been sent!")
-            )
-        else:
-            await query.message.reply_text(
-                sanitize_unicode("❌ No files found for this movie.")
-            )
-    
-    except Exception as e:
-        logging.error(f"Error fetching files for movie {movie_id}: {sanitize_unicode(str(e))}")
-        await query.message.reply_text(
-            sanitize_unicode("❌ An error occurred while fetching the movie files.")
-        )
+# ============================
+# START HANDLER
+# ============================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     bot_name = context.bot.first_name
     args = context.args
 
-    # 🔹 Deep link movie handling
+    # 🔹 Language selection handling
+    if args and args[0].startswith("select_"):
+        movie_id = args[0].replace("select_", "")
+        await show_language_selection(update, context, movie_id)
+        return
+    
+    # 🔹 Language-specific download handling
+    if args and args[0].startswith("lang_"):
+        # Format: lang_{movie_id}_{language}
+        parts = args[0].split("_")
+        if len(parts) >= 3:
+            movie_id = parts[1]
+            language = "_".join(parts[2:])  # In case language has underscores
+            await send_language_files(update, context, movie_id, language)
+            return
+    
+    # 🔹 Deep link movie handling (old style - for backward compatibility)
     if args:
         movie_id = args[0]
         movie = collection.find_one({"movie_id": movie_id})
@@ -611,7 +802,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             url=f"https://t.me/{context.bot.username}?startgroup=true"
         )],
         [
-            InlineKeyboardButton("💬 Comments", callback_data="menu_comments"),
+            InlineKeyboardButton("💬 Commands", callback_data="menu_comments"),
             InlineKeyboardButton("📦 Source", callback_data="menu_source")
         ],
         [
@@ -625,6 +816,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.callback_query.message.edit_text(text, reply_markup=keyboard)
 
+# ============================
+# MENU HANDLERS
+# ============================
+
 async def menu_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -633,9 +828,9 @@ async def menu_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📌 **Available Commands**\n\n"
         "/start – Start bot\n"
         "/search – Search movies\n"
-        "/list – Admin movie list\n"
+        "/list – Admin movie list (PM only)\n"
         "/id – Get IDs\n"
-        "/admin – Show admin info (admins only)\n"
+        "/admin – Show admin info (PM only)\n"
     )
 
     keyboard = InlineKeyboardMarkup([
@@ -689,24 +884,34 @@ async def menu_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def menu_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start(update, context)
 
-# Define the /id command handler
+# ============================
+# COMMAND HANDLERS
+# ============================
+
 async def id_command(update: Update, context: CallbackContext):
     """Respond with the user's ID and the group ID."""
-    user_id = update.effective_user.id  # Get the user's ID
-    chat_id = update.effective_chat.id  # Get the group/chat ID
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
 
-    # Construct the response
     response = (
         f"👤 Your ID: {user_id}\n"
         f"💬 Group ID: {chat_id}"
     )
 
-    # Send the response back to the user
     await update.message.reply_text(response)
 
-# Define the /list command (paginated list)
 async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to list movies - ONLY in private chat."""
+    
+    # Check if user is admin
     if not is_admin(update.effective_user.id):
+        return
+    
+    # 🔴 RESTRICT TO PRIVATE CHATS ONLY
+    if update.effective_chat.type != "private":
+        await update.message.reply_text(
+            "❌ This command works only in private chat with the bot."
+        )
         return
 
     page = int(context.args[0]) if context.args else 1
@@ -750,12 +955,7 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    if update.message:
-        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
-    else:
-        await update.callback_query.message.edit_text(
-            text, reply_markup=reply_markup, parse_mode="Markdown"
-        )
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
 async def ask_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -828,7 +1028,6 @@ async def delete_by_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# Pagination handler
 async def paginate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -838,12 +1037,19 @@ async def paginate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.args = [str(page)]
     await list_movies(update, context)
 
-# Define the /admin command handler
 async def admin_command(update: Update, context: CallbackContext):
-    """Show all admin IDs and count."""
+    """Show all admin IDs and count - ONLY in private chat."""
+    
     # Only allow admins to use this command
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("❌ This command is for admins only.")
+        return
+    
+    # 🔴 RESTRICT TO PRIVATE CHATS ONLY
+    if update.effective_chat.type != "private":
+        await update.message.reply_text(
+            "❌ This command works only in private chat with the bot."
+        )
         return
     
     if not ADMIN_IDS:
@@ -870,7 +1076,6 @@ async def admin_command(update: Update, context: CallbackContext):
     
     await update.message.reply_text(message, parse_mode="Markdown")
 
-#Delete confirmation dialog
 async def confirm_number_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -884,19 +1089,19 @@ async def confirm_number_delete(update: Update, context: ContextTypes.DEFAULT_TY
     context.args = [page]
     await list_movies(update, context)
 
-# Callback router
+# ============================
+# CALLBACK ROUTERS
+# ============================
+
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = update.callback_query.data
 
     if data.startswith("page:"):
         await paginate(update, context)
-
     elif data == "ask_delete":
         await ask_delete(update, context)
-
     elif data.startswith("confirm_del:"):
         await confirm_number_delete(update, context)
-
     elif data == "cancel_del":
         await update.callback_query.message.delete()
 
@@ -913,6 +1118,10 @@ async def start_menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await menu_status(update, context)
     elif data == "menu_close":
         await menu_close(update, context)
+
+# ============================
+# WEB SERVER & KEEP AWAKE
+# ============================
 
 async def start_web_server():
     """Start a web server for health checks."""
@@ -931,8 +1140,8 @@ async def start_web_server():
 async def keep_awake():
     """Ping the bot's hosting URL every 5 minutes to prevent sleeping."""
     url = "https://select-kitti-maxzues003-d3896a3f.koyeb.app/"
-    max_retries = 5  # Maximum retries before giving up
-    retry_delay = 10  # Start with a 10-second delay
+    max_retries = 5
+    retry_delay = 10
 
     async with aiohttp.ClientSession() as session:
         for attempt in range(max_retries):
@@ -940,21 +1149,22 @@ async def keep_awake():
                 async with session.get(url) as resp:
                     if resp.status == 200:
                         logging.info("✅ Ping successful: Bot is awake")
-                        return  # Exit function on success
+                        return
                     else:
                         logging.warning(f"⚠️ Ping failed (status {resp.status}), retrying...")
-
             except Exception as e:
                 logging.error(f"❌ Error pinging self: {e}")
 
-            # Exponential backoff before retrying
             await asyncio.sleep(retry_delay)
-            retry_delay = min(retry_delay * 2, 300)  # Max backoff time = 5 minutes
+            retry_delay = min(retry_delay * 2, 300)
 
     logging.critical("🚨 Max retries reached. Bot might be inactive!")
 
-# Schedule keep_awake() to run every 5 minutes
 aiocron.crontab("*/5 * * * *", func=keep_awake)
+
+# ============================
+# MAIN FUNCTION
+# ============================
 
 async def main():
     """Main function to start the bot."""
@@ -963,7 +1173,6 @@ async def main():
 
         application = ApplicationBuilder().token(TOKEN).build()
         
-        # Add import for filters
         from telegram.ext import filters
         
         # HANDLER ORDER MATTERS! Add specific handlers first
@@ -974,19 +1183,19 @@ async def main():
         application.add_handler(CommandHandler("list", list_movies))
         application.add_handler(CommandHandler("admin", admin_command))
 
-        # MENU BUTTONS (/start menu)
+        # 2. Callback handlers
         application.add_handler(CallbackQueryHandler(start_menu_router, pattern="^menu_"))
-
-        # MOVIE UPLOAD NAME EDIT
+        application.add_handler(CallbackQueryHandler(language_callback_handler, pattern="^lang_"))
         application.add_handler(CallbackQueryHandler(name_decision_handler, pattern="^(edit_name|continue_name)$"))
-
-        # MOVIE DOWNLOAD BUTTON
-        application.add_handler(CallbackQueryHandler(get_movie_files, pattern="^movie_"))
-
-        # LIST / DELETE / PAGINATION
         application.add_handler(CallbackQueryHandler(callback_router,pattern="^(page:|ask_delete|confirm_del:|cancel_del)"))
 
-        # 3. File/Photo upload handlers - ONLY in storage group
+        # 3. Search handler - MUST COME BEFORE delete_by_number
+        application.add_handler(MessageHandler(
+            filters.TEXT & ~filters.COMMAND & filters.Chat(SEARCH_GROUP_ID),
+            search_movie
+        ))
+
+        # 4. File/Photo upload handlers
         application.add_handler(MessageHandler(
             filters.Document.ALL & filters.Chat(STORAGE_GROUP_ID), 
             add_movie
@@ -996,21 +1205,16 @@ async def main():
             add_movie
         ))
         
-        # 4. Text handler - ONLY in storage group (for name editing)
+        # 5. Text handler for name editing
         application.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND & filters.Chat(STORAGE_GROUP_ID),
             text_handler
         ))
-        # 5. Text handler -(delete_by_number)
+        
+        # 6. Delete handler - MUST BE LAST (least specific)
         application.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             delete_by_number
-        ))
-
-        # 6. Search handler - ONLY in search group
-        application.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND & filters.Chat(SEARCH_GROUP_ID),
-            search_movie
         ))
 
         await application.run_polling()
