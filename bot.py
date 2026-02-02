@@ -867,8 +867,7 @@ async def menu_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/start – Start bot\n"
         "/list – Admin movie list (PM only)\n"
         "/id – Get IDs\n"
-        "/admin – Show admin info (PM only)\n"
-        "/verify – Verify admin status\n"
+        "/admin – Verify admin status\n"
     )
 
     keyboard = InlineKeyboardMarkup([
@@ -938,7 +937,7 @@ async def id_command(update: Update, context: CallbackContext):
 
     await update.message.reply_text(response, parse_mode="Markdown")
 
-async def verify_admins(update: Update, context: CallbackContext):
+async def admin_command(update: Update, context: CallbackContext):
     """Verify which admin IDs are loaded (accessible by anyone for testing)."""
     
     user_id = update.effective_user.id
@@ -1122,45 +1121,6 @@ async def paginate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.args = [str(page)]
     await list_movies(update, context)
 
-async def admin_command(update: Update, context: CallbackContext):
-    """Show all admin IDs and count - ONLY in private chat."""
-    
-    # Only allow admins to use this command
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("❌ This command is for admins only.")
-        return
-    
-    # 🔴 RESTRICT TO PRIVATE CHATS ONLY
-    if update.effective_chat.type != "private":
-        await update.message.reply_text(
-            "❌ This command works only in private chat with the bot."
-        )
-        return
-    
-    if not ADMIN_IDS:
-        await update.message.reply_text("❌ No admins configured.")
-        return
-    
-    # Count admins
-    admin_count = len(ADMIN_IDS)
-    
-    # Format admin list with numbers
-    admin_list = "\n".join([f"{i+1}. `{admin_id}`" for i, admin_id in enumerate(sorted(ADMIN_IDS))])
-    
-    # Get current user info
-    current_user = update.effective_user
-    is_current_admin = is_admin(current_user.id)
-    
-    message = (
-        f"👑 **Admin Information**\n\n"
-        f"📊 **Total Admins:** `{admin_count}`\n\n"
-        f"🆔 **Admin IDs:**\n{admin_list}\n\n"
-        f"👤 **Your ID:** `{current_user.id}`\n"
-        f"🏷 **Your Status:** {'**ADMIN** ✅' if is_current_admin else 'User'}"
-    )
-    
-    await update.message.reply_text(message, parse_mode="Markdown")
-
 async def confirm_number_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1270,7 +1230,6 @@ async def main():
         application.add_handler(CommandHandler("id", id_command))
         application.add_handler(CommandHandler("list", list_movies))
         application.add_handler(CommandHandler("admin", admin_command))
-        application.add_handler(CommandHandler("verify", verify_admins))
 
         # 2. Callback handlers
         application.add_handler(CallbackQueryHandler(start_menu_router, pattern="^menu_"))
