@@ -38,16 +38,7 @@ class TimezoneFormatter(logging.Formatter):
 nest_asyncio.apply()
 load_dotenv()
 
-# Configuration
-TOKEN = os.getenv('TOKEN')
-DB_URL = os.getenv('DB_URL')
-SEARCH_GROUP_ID = int(os.getenv('SEARCH_GROUP_ID'))
-STORAGE_GROUP_ID = int(os.getenv('STORAGE_GROUP_ID'))
-ADMIN_IDS = set(int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip())
-PORT = int(os.getenv('PORT', 8088))
-PAGE_SIZE = 10
-
-# Logging Configuration
+# Logging Configuration (Setup before loading config)
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
@@ -64,6 +55,57 @@ for handler in logger.handlers:
         fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S %Z'
     ))
+
+# Configuration
+TOKEN = os.getenv('TOKEN')
+DB_URL = os.getenv('DB_URL')
+SEARCH_GROUP_ID = int(os.getenv('SEARCH_GROUP_ID'))
+STORAGE_GROUP_ID = int(os.getenv('STORAGE_GROUP_ID'))
+PORT = int(os.getenv('PORT', 8088))
+PAGE_SIZE = 10
+
+# ✅ IMPROVED ADMIN IDS PARSING
+def load_admin_ids():
+    """Load and validate admin IDs from environment."""
+    try:
+        raw_ids = os.getenv("ADMIN_IDS", "")
+        
+        if not raw_ids:
+            logging.warning("⚠️ ADMIN_IDS not set in .env file!")
+            return set()
+        
+        logging.info(f"📋 Raw ADMIN_IDS from .env: '{raw_ids}'")
+        
+        # Clean and parse IDs
+        admin_ids = set()
+        for id_str in raw_ids.split(","):
+            cleaned_id = id_str.strip()
+            if cleaned_id and cleaned_id.isdigit():
+                admin_ids.add(int(cleaned_id))
+                logging.info(f"   ✅ Added admin ID: {cleaned_id}")
+            else:
+                logging.warning(f"   ⚠️ Skipping invalid admin ID: '{id_str}'")
+        
+        logging.info(f"🔑 Successfully loaded {len(admin_ids)} admin(s)")
+        
+        return admin_ids
+        
+    except Exception as e:
+        logging.error(f"❌ Error parsing ADMIN_IDS: {e}")
+        return set()
+
+ADMIN_IDS = load_admin_ids()
+
+# Verify at least one admin exists
+if not ADMIN_IDS:
+    logging.critical("🚨 No valid admin IDs found! Bot will have limited functionality.")
+else:
+    logging.info(f"👑 Admin IDs loaded: {sorted(ADMIN_IDS)}")
+
+# Helper function to check admin status
+def is_admin(user_id: int) -> bool:
+    """Check if user is admin."""
+    return user_id in ADMIN_IDS
 
 # MongoDB Client Setup
 def connect_mongo():
@@ -85,11 +127,6 @@ def connect_mongo():
 
 collection = connect_mongo()
 search_group_messages = []
-
-# Helper function to check admin status
-def is_admin(user_id: int) -> bool:
-    """Check if user is admin."""
-    return user_id in ADMIN_IDS
 
 # Helper function to sanitize Unicode text
 def sanitize_unicode(text):
@@ -831,6 +868,7 @@ async def menu_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/list – Admin movie list (PM only)\n"
         "/id – Get IDs\n"
         "/admin – Show admin info (PM only)\n"
+        "/verify – Verify admin status\n"
     )
 
     keyboard = InlineKeyboardMarkup([
@@ -894,17 +932,46 @@ async def id_command(update: Update, context: CallbackContext):
     chat_id = update.effective_chat.id
 
     response = (
-        f"👤 Your ID: {user_id}\n"
-        f"💬 Group ID: {chat_id}"
+        f"👤 Your ID: `{user_id}`\n"
+        f"💬 Group ID: `{chat_id}`"
     )
 
-    await update.message.reply_text(response)
+    await update.message.reply_text(response, parse_mode="Markdown")
+
+async def verify_admins(update: Update, context: CallbackContext):
+    """Verify which admin IDs are loaded (accessible by anyone for testing)."""
+    
+    user_id = update.effective_user.id
+    
+    if not ADMIN_IDS:
+        await update.message.reply_text("❌ No admin IDs configured!")
+        return
+    
+    # Build admin list
+    admin_list = []
+    for i, admin_id in enumerate(sorted(ADMIN_IDS), 1):
+        is_you = " 👈 **YOU**" if admin_id == user_id else ""
+        admin_list.append(f"{i}. `{admin_id}`{is_you}")
+    
+    admin_text = "\n".join(admin_list)
+    
+    message = (
+        f"👑 **Admin Verification**\n\n"
+        f"📊 **Total Admins Loaded:** {len(ADMIN_IDS)}\n\n"
+        f"🆔 **Admin IDs:**\n{admin_text}\n\n"
+        f"👤 **Your ID:** `{user_id}`\n"
+        f"✅ **Your Status:** {'**ADMIN**' if is_admin(user_id) else 'Regular User'}\n\n"
+        f"💡 **Tip:** All users above should have admin privileges."
+    )
+    
+    await update.message.reply_text(message, parse_mode="Markdown")
 
 async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to list movies - ONLY in private chat."""
     
     # Check if user is admin
     if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Only admins can use this command.")
         return
     
     # 🔴 RESTRICT TO PRIVATE CHATS ONLY
@@ -990,18 +1057,19 @@ async def ask_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def delete_by_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ✅ Only admins can delete
-    if not is_admin(update.effective_user.id):
-        return
-
     # ✅ Must be a normal text message
     if not update.message or not update.message.text:
         return
 
     user_id = update.effective_user.id
 
-    # ✅ Must have an active delete session
+    # ✅ Must have an active delete session - CHECK THIS FIRST!
     if user_id not in delete_sessions:
+        return  # Not a delete session, let other handlers process it
+
+    # ✅ Only NOW check if admin (since we have a delete session)
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Only admins can delete movies.")
         return
 
     text = update.message.text.strip()
@@ -1018,7 +1086,10 @@ async def delete_by_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ✅ Number range check
     if index < 0 or index >= len(movies):
-        await update.message.reply_text(f"❌ Invalid number.\nPlease choose a number **from this page only**.",parse_mode="Markdown")
+        await update.message.reply_text(
+            f"❌ Invalid number.\nPlease choose a number **from this page only**.",
+            parse_mode="Markdown"
+        )
         return
 
     movie = movies[index]
@@ -1199,6 +1270,7 @@ async def main():
         application.add_handler(CommandHandler("id", id_command))
         application.add_handler(CommandHandler("list", list_movies))
         application.add_handler(CommandHandler("admin", admin_command))
+        application.add_handler(CommandHandler("verify", verify_admins))
 
         # 2. Callback handlers
         application.add_handler(CallbackQueryHandler(start_menu_router, pattern="^menu_"))
