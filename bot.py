@@ -803,6 +803,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_name = context.bot.first_name
     args = context.args
 
+     # 🔒 Allow /start ONLY in private chat
+    if update.effective_chat.type != "private":
+        return
+    
     # 🔹 Language selection handling
     if args and args[0].startswith("select_"):
         movie_id = args[0].replace("select_", "")
