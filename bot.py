@@ -879,16 +879,20 @@ async def menu_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    text = (
-        "📌 **Available Commands**\n\n"
-        "/start – Start bot\n"
-        "/list – Admin movie list (PM only)\n"
-        "/id – Get IDs\n"
-        "/admin – Verify admin status\n"
-    )
+    text = "📌 **Available Commands**"
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔙 Back To Home", callback_data="menu_home")]
+        [
+            InlineKeyboardButton("▶️ Start", callback_data="cmd_start"),
+            InlineKeyboardButton("🗑 Delete", callback_data="cmd_delete")
+        ],
+        [
+            InlineKeyboardButton("🆔 ID", callback_data="cmd_id"),
+            InlineKeyboardButton("👑 Admin", callback_data="cmd_admin")
+        ],
+        [
+            InlineKeyboardButton("🔙 Back To Home", callback_data="menu_home")
+        ]
     ])
 
     await query.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
@@ -983,8 +987,7 @@ async def admin_command(update: Update, context: CallbackContext):
     await update.message.reply_text(message, parse_mode="Markdown")
 
 async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command to list movies - ONLY in private chat."""
-    
+    """Admin command to delete movies - ONLY in private chat."""
     # Check if user is admin
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("❌ Only admins can use this command.")
@@ -1171,18 +1174,39 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.delete()
 
 async def start_menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = update.callback_query.data
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
 
     if data == "menu_home":
         await menu_home(update, context)
+
     elif data == "menu_comments":
         await menu_comments(update, context)
+
     elif data == "menu_source":
         await menu_source(update, context)
+
     elif data == "menu_status":
         await menu_status(update, context)
+
     elif data == "menu_close":
         await menu_close(update, context)
+
+    elif data == "cmd_start":
+        await query.message.reply_text("/start")
+
+    elif data == "cmd_delete":
+        await query.message.reply_text("/delete")
+
+    elif data == "cmd_id":
+        await query.message.reply_text("/id")
+
+    elif data == "cmd_admin":
+        await query.message.reply_text("/admin")
+
+        
 
 # ============================
 # WEB SERVER & KEEP AWAKE
@@ -1243,7 +1267,7 @@ async def main():
         # 1. Command handlers
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("id", id_command))
-        application.add_handler(CommandHandler("list", list_movies))
+        application.add_handler(CommandHandler("delete", list_movies))
         application.add_handler(CommandHandler("admin", admin_command))
 
         # 2. Callback handlers
