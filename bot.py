@@ -1009,10 +1009,7 @@ broadcast_sessions = {}
 
 async def broadcast_command(update: Update, context: CallbackContext):
     """
-    Broadcast a message to the search group - Two-step process.
-    Step 1: /broadcast - Enable broadcast mode
-    Step 2: Send message/image - Store it
-    Step 3: Confirm with buttons - Send or Cancel
+    Broadcast a message to the search group - Enable broadcast mode.
     
     ✅ Admin only
     ✅ Bot PM only
@@ -1041,7 +1038,7 @@ async def broadcast_command(update: Update, context: CallbackContext):
     
     await update.message.reply_text(
         "📢 **Broadcast Mode Enabled**\n\n"
-        "Send the message or image you want to broadcast.",
+        "Send your message or image now.",
         parse_mode="Markdown"
     )
 
@@ -1430,19 +1427,30 @@ async def start_menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif data == "cmd_broadcast":
         # Check if admin
-        if not is_admin(query.from_user.id):
-            await query.message.reply_text("❌ Only admins can use this command.")
+        user_id = query.from_user.id
+        if not is_admin(user_id):
+            await query.answer("❌ Only admins can use this command.", show_alert=True)
             return
-            
+        
+        # Check if in private chat
+        if query.message.chat.type != "private":
+            await query.answer("❌ This command only works in private chat.", show_alert=True)
+            return
+        
+        # 📢 Enable broadcast mode directly
+        broadcast_sessions[user_id] = {
+            'active': True,
+            'message': None,
+            'photo': None,
+            'caption': None
+        }
+        
         await query.message.reply_text(
-            "📢 **Broadcast Command**\n\n"
-            "**How to use:**\n"
-            "1️⃣ Type `/broadcast` to enable broadcast mode\n"
-            "2️⃣ Send your message or image\n"
-            "3️⃣ Click ✅ Send or ❌ Cancel\n\n"
-            "💡 This command only works in private chat.",
+            "📢 **Broadcast Mode Enabled**\n\n"
+            "Send your message or image now.",
             parse_mode="Markdown"
         )
+        await query.answer("✅ Broadcast mode enabled")
 
         
 # ============================
