@@ -1545,17 +1545,18 @@ async def main():
             text_handler
         ))
         
-        # 6. Broadcast message handler (for admin in private chat)
-        application.add_handler(MessageHandler(
-            (filters.TEXT | filters.PHOTO) & ~filters.COMMAND & filters.ChatType.PRIVATE,
-            broadcast_message_handler
-        ))
-        
-        # 7. Delete handler - MUST BE LAST (least specific)
+        # 6. Delete handler
         application.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             delete_by_number
         ))
+
+        # 7. Broadcast message handler 
+        application.add_handler(MessageHandler(
+            (filters.TEXT | filters.PHOTO) & ~filters.COMMAND & filters.ChatType.PRIVATE,
+            broadcast_message_handler
+        ))
+
 
         await application.run_polling()
     except Exception as e:
