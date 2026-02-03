@@ -947,7 +947,6 @@ async def menu_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============================
 
 async def id_command(update: Update, context: CallbackContext):
-    """Respond with the user's ID and the group ID."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
@@ -956,25 +955,32 @@ async def id_command(update: Update, context: CallbackContext):
         f"💬 Group ID: `{chat_id}`"
     )
 
-    await update.message.reply_text(response, parse_mode="Markdown")
+    if update.message:
+        await update.message.reply_text(response, parse_mode="Markdown")
+    elif update.callback_query:
+        await update.callback_query.message.reply_text(response, parse_mode="Markdown")
 
 async def admin_command(update: Update, context: CallbackContext):
     """Verify which admin IDs are loaded (accessible by anyone for testing)."""
-    
+
     user_id = update.effective_user.id
-    
+
+    # ❌ FIX: handle both message & callback
     if not ADMIN_IDS:
-        await update.message.reply_text("❌ No admin IDs configured!")
+        if update.message:
+            await update.message.reply_text("❌ No admin IDs configured!")
+        elif update.callback_query:
+            await update.callback_query.message.reply_text("❌ No admin IDs configured!")
         return
-    
+
     # Build admin list
     admin_list = []
     for i, admin_id in enumerate(sorted(ADMIN_IDS), 1):
         is_you = " 👈 **YOU**" if admin_id == user_id else ""
         admin_list.append(f"{i}. `{admin_id}`{is_you}")
-    
+
     admin_text = "\n".join(admin_list)
-    
+
     message = (
         f"👑 **Admin Verification**\n\n"
         f"📊 **Total Admins Loaded:** {len(ADMIN_IDS)}\n\n"
@@ -983,18 +989,28 @@ async def admin_command(update: Update, context: CallbackContext):
         f"✅ **Your Status:** {'**ADMIN**' if is_admin(user_id) else 'Regular User'}\n\n"
         f"💡 **Tip:** All users above should have admin privileges."
     )
-    
-    await update.message.reply_text(message, parse_mode="Markdown")
+
+    # ✅ FIX: reply correctly based on update type
+    if update.message:
+        await update.message.reply_text(message, parse_mode="Markdown")
+    elif update.callback_query:
+        await update.callback_query.message.reply_text(message, parse_mode="Markdown")
+
 
 async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to delete movies - ONLY in private chat."""
-    # Check if user is admin
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("❌ Only admins can use this command.")
+
+    user_id = update.effective_user.id
+
+    # 🚫 ADMIN CHECK (works for command + button)
+    if not is_admin(user_id):
+        if update.message:
+            await update.message.reply_text("❌ Only admins can use this command.")
+        elif update.callback_query:
+            await update.callback_query.message.reply_text("❌ Only admins can use this command.")
         return
-    
-    # 🔴 RESTRICT TO PRIVATE CHATS ONLY
-    # Check if this is a callback query (button click) or regular message
+
+    # 🔒 PRIVATE CHAT ONLY
     if update.message:
         if update.effective_chat.type != "private":
             await update.message.reply_text(
@@ -1003,11 +1019,14 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     elif update.callback_query:
         if update.callback_query.message.chat.type != "private":
-            await update.callback_query.answer("❌ This command works only in private chat.")
+            await update.callback_query.answer(
+                "❌ This command works only in private chat."
+            )
             return
     else:
-        return  # Neither message nor callback query
+        return
 
+    # 📄 Pagination
     page = int(context.args[0]) if context.args else 1
     skip = (page - 1) * PAGE_SIZE
 
@@ -1026,12 +1045,13 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i, movie in enumerate(movies, start=skip + 1):
             text += f"{i}. {movie.get('name', 'Unknown Movie')}\n"
 
-    # Save movies for delete-by-number
-    delete_sessions[update.effective_user.id] = {
+    # 💾 Save session for delete-by-number
+    delete_sessions[user_id] = {
         "page": page,
         "movies": movies
     }
 
+    # ⬅️➡️ Navigation buttons
     keyboard = []
 
     nav = []
@@ -1049,12 +1069,18 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Handle both message and callback query cases
+    # 📤 Send / Edit message safely
     if update.message:
-        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        await update.message.reply_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
     elif update.callback_query:
         await update.callback_query.message.edit_text(
-            text, reply_markup=reply_markup, parse_mode="Markdown"
+            text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
         )
 
 async def ask_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
