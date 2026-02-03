@@ -895,6 +895,9 @@ async def menu_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("👑 Admin", callback_data="cmd_admin")
         ],
         [
+            InlineKeyboardButton("📢 Broadcast", callback_data="cmd_broadcast")
+        ],
+        [
             InlineKeyboardButton("🔙 Back To Home", callback_data="menu_home")
         ]
     ])
@@ -999,6 +1002,186 @@ async def admin_command(update: Update, context: CallbackContext):
         await update.message.reply_text(message, parse_mode="Markdown")
     elif update.callback_query:
         await update.callback_query.message.reply_text(message, parse_mode="Markdown")
+
+
+# Temporary storage for broadcast sessions
+broadcast_sessions = {}
+
+async def broadcast_command(update: Update, context: CallbackContext):
+    """
+    Broadcast a message to the search group - Two-step process.
+    Step 1: /broadcast - Enable broadcast mode
+    Step 2: Send message/image - Store it
+    Step 3: Confirm with buttons - Send or Cancel
+    
+    ✅ Admin only
+    ✅ Bot PM only
+    """
+    user_id = update.effective_user.id
+    
+    # 🚫 ADMIN CHECK
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Only admins can use this command.")
+        return
+    
+    # 🔒 PRIVATE CHAT ONLY
+    if update.effective_chat.type != "private":
+        await update.message.reply_text(
+            "❌ This command works only in private chat with the bot."
+        )
+        return
+    
+    # 📢 Enable broadcast mode
+    broadcast_sessions[user_id] = {
+        'active': True,
+        'message': None,
+        'photo': None,
+        'caption': None
+    }
+    
+    await update.message.reply_text(
+        "📢 **Broadcast Mode Enabled**\n\n"
+        "Send the message or image you want to broadcast.",
+        parse_mode="Markdown"
+    )
+
+async def broadcast_message_handler(update: Update, context: CallbackContext):
+    """Handle messages when broadcast mode is active."""
+    
+    user_id = update.effective_user.id
+    
+    # Check if user has active broadcast session
+    if user_id not in broadcast_sessions or not broadcast_sessions[user_id].get('active'):
+        return  # Not in broadcast mode
+    
+    session = broadcast_sessions[user_id]
+    
+    # 📸 Handle photo
+    if update.message.photo:
+        largest_photo = max(
+            update.message.photo,
+            key=lambda p: p.width * p.height
+        )
+        
+        caption = update.message.caption or ""
+        
+        session['photo'] = largest_photo.file_id
+        session['caption'] = sanitize_unicode(caption)
+        session['message'] = None
+        
+        # Show confirmation buttons
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("❌ Cancel", callback_data="broadcast_cancel"),
+                InlineKeyboardButton("✅ Send", callback_data="broadcast_send")
+            ]
+        ])
+        
+        # Show preview
+        await update.message.reply_photo(
+            photo=largest_photo.file_id,
+            caption=f"📢 **Preview:**\n\n{caption if caption else '(No caption)'}",
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+        return
+    
+    # 📝 Handle text message
+    if update.message.text:
+        message_text = sanitize_unicode(update.message.text.strip())
+        
+        if not message_text:
+            await update.message.reply_text("❌ Message cannot be empty.")
+            return
+        
+        session['message'] = message_text
+        session['photo'] = None
+        session['caption'] = None
+        
+        # Show confirmation buttons
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("❌ Cancel", callback_data="broadcast_cancel"),
+                InlineKeyboardButton("✅ Send", callback_data="broadcast_send")
+            ]
+        ])
+        
+        # Show preview
+        await update.message.reply_text(
+            f"📢 **Preview:**\n\n{message_text}",
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+        return
+
+async def broadcast_callback_handler(update: Update, context: CallbackContext):
+    """Handle broadcast confirmation buttons."""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    data = query.data
+    
+    # Check if user has active broadcast session
+    if user_id not in broadcast_sessions:
+        await query.message.edit_text("❌ No active broadcast session.")
+        return
+    
+    session = broadcast_sessions[user_id]
+    
+    # ❌ CANCEL
+    if data == "broadcast_cancel":
+        del broadcast_sessions[user_id]
+        await query.message.edit_text("❌ Broadcast cancelled.")
+        return
+    
+    # ✅ SEND
+    if data == "broadcast_send":
+        try:
+            # Send photo with caption
+            if session.get('photo'):
+                await context.bot.send_photo(
+                    chat_id=SEARCH_GROUP_ID,
+                    photo=session['photo'],
+                    caption=session.get('caption', ''),
+                    parse_mode="Markdown"
+                )
+                
+                await query.message.edit_text(
+                    "✅ **Broadcast sent successfully!**\n\n"
+                    "📸 Image + Caption sent to search group.",
+                    parse_mode="Markdown"
+                )
+            
+            # Send text message
+            elif session.get('message'):
+                await context.bot.send_message(
+                    chat_id=SEARCH_GROUP_ID,
+                    text=session['message'],
+                    parse_mode="Markdown"
+                )
+                
+                await query.message.edit_text(
+                    "✅ **Broadcast sent successfully!**\n\n"
+                    "📤 Message sent to search group.",
+                    parse_mode="Markdown"
+                )
+            
+            else:
+                await query.message.edit_text("❌ No message to send.")
+            
+            # Clean up session
+            del broadcast_sessions[user_id]
+            
+        except Exception as e:
+            logging.error(f"Broadcast error: {sanitize_unicode(str(e))}")
+            await query.message.edit_text(
+                f"❌ Failed to broadcast:\n`{sanitize_unicode(str(e))}`",
+                parse_mode="Markdown"
+            )
+            
+            # Keep session active on error
+            session['active'] = True
 
 
 async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1244,6 +1427,22 @@ async def start_menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "cmd_admin":
         await admin_command(update, context)
+    
+    elif data == "cmd_broadcast":
+        # Check if admin
+        if not is_admin(query.from_user.id):
+            await query.message.reply_text("❌ Only admins can use this command.")
+            return
+            
+        await query.message.reply_text(
+            "📢 **Broadcast Command**\n\n"
+            "**How to use:**\n"
+            "1️⃣ Type `/broadcast` to enable broadcast mode\n"
+            "2️⃣ Send your message or image\n"
+            "3️⃣ Click ✅ Send or ❌ Cancel\n\n"
+            "💡 This command only works in private chat.",
+            parse_mode="Markdown"
+        )
 
         
 # ============================
@@ -1307,11 +1506,13 @@ async def main():
         application.add_handler(CommandHandler("id", id_command))
         application.add_handler(CommandHandler("delete", list_movies))
         application.add_handler(CommandHandler("admin", admin_command))
+        application.add_handler(CommandHandler("broadcast", broadcast_command))
 
         # 2. Callback handlers
         application.add_handler(CallbackQueryHandler(start_menu_router, pattern="^(menu_|cmd_)"))
         application.add_handler(CallbackQueryHandler(language_callback_handler, pattern="^lang_"))
         application.add_handler(CallbackQueryHandler(name_decision_handler, pattern="^(edit_name|continue_name)$"))
+        application.add_handler(CallbackQueryHandler(broadcast_callback_handler, pattern="^broadcast_"))
         application.add_handler(CallbackQueryHandler(callback_router,pattern="^(page:|ask_delete|confirm_del:|cancel_del)"))
 
         # 3. Search handler - MUST COME BEFORE delete_by_number
@@ -1336,7 +1537,13 @@ async def main():
             text_handler
         ))
         
-        # 6. Delete handler - MUST BE LAST (least specific)
+        # 6. Broadcast message handler (for admin in private chat)
+        application.add_handler(MessageHandler(
+            (filters.TEXT | filters.PHOTO) & ~filters.COMMAND & filters.ChatType.PRIVATE,
+            broadcast_message_handler
+        ))
+        
+        # 7. Delete handler - MUST BE LAST (least specific)
         application.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             delete_by_number
