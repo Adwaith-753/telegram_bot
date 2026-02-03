@@ -5,7 +5,6 @@ import aiocron
 import asyncio
 import time
 import pytz
-from collections import defaultdict
 from pymongo import MongoClient, errors
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackContext, filters
@@ -188,15 +187,7 @@ def extract_language_from_filename(filename):
     return 'Unknown'
 
 # Temporary storage for incomplete movie uploads
-upload_sessions = defaultdict(lambda: {
-    'files': [], 
-    'image': None, 
-    'movie_name': None,
-    'awaiting_name_edit': False,
-    'name_confirmed': False,
-    'saved': False,
-    'user_id': None
-})
+upload_sessions = {}
 
 delete_sessions = {}
 
@@ -450,7 +441,12 @@ async def name_decision_handler(update: Update, context: CallbackContext):
 
         # Save movie if everything is ready
         # Check that we have all required data before saving
-        if session['files'] and session['image']:
+        if (
+            session['files']
+            and session['image']
+            and session['movie_name']
+            and session['name_confirmed']
+        ):
             await check_and_save_movie(user_id, update, context)
 
 async def text_handler(update: Update, context: CallbackContext):
@@ -493,88 +489,104 @@ async def text_handler(update: Update, context: CallbackContext):
     )
 
     # Save movie if everything is ready
-    if session['files'] and session['image']:
+    if (
+        session['files']
+        and session['image']
+        and session['movie_name']
+        and session['name_confirmed']
+    ):
         await check_and_save_movie(user_id, update, context)
 
 async def check_and_save_movie(user_id, update, context):
     """Check if all conditions are met and save the movie to database."""
 
+    # ✅ Get session FIRST
     session = upload_sessions.get(user_id)
 
     if not session:
         return
 
+    # 🚫 HARD STOP if name not confirmed
+    if not session.get("name_confirmed"):
+        return
+
     # 🚫 Prevent double save
-    if session.get('saved'):
+    if session.get("saved"):
         return
 
-    # Check if we have all required data
-    if not (session['files'] and session['image'] and session['movie_name']):
+    # 🚫 Ensure required data exists
+    if not (
+        session.get("files")
+        and session.get("image")
+        and session.get("movie_name")
+    ):
         return
 
-    # 🔒 Mark as saved BEFORE DB insert (important)
-    session['saved'] = True
+    # 🔒 Mark as saved BEFORE DB insert
+    session["saved"] = True
 
     # Create movie entry
     movie_id = str(uuid.uuid4())
     movie_entry = {
-        'movie_id': movie_id,
-        'name': session['movie_name'],
-        'media': {
-            'documents': session['files'],
-            'image': session['image']
+        "movie_id": movie_id,
+        "name": session["movie_name"],
+        "media": {
+            "documents": session["files"],
+            "image": session["image"]
         }
     }
 
     try:
+        # ✅ Insert into DB
         collection.insert_one(movie_entry)
 
-        # Use the proper way to send message based on update type
+        success_text = sanitize_unicode(
+            f"✅ Successfully added movie:\n\n🎬 **{session['movie_name']}**"
+        )
+
+        # ✅ Respond safely depending on update type
         if update.callback_query:
-            # For callback queries (Edit/Continue buttons)
             await update.callback_query.message.reply_text(
-                sanitize_unicode(f"✅ Successfully added movie: {session['movie_name']}")
+                success_text, parse_mode="Markdown"
             )
         elif update.message:
-            # For regular messages (non-admin uploads)
             await update.message.reply_text(
-                sanitize_unicode(f"✅ Successfully added movie: {session['movie_name']}")
+                success_text, parse_mode="Markdown"
             )
         else:
-            # Fallback - try to send to user directly
             await context.bot.send_message(
                 chat_id=user_id,
-                text=sanitize_unicode(f"✅ Successfully added movie: {session['movie_name']}")
+                text=success_text,
+                parse_mode="Markdown"
             )
 
-        # Send preview to search group
+        # ✅ Send preview to search group
         if SEARCH_GROUP_ID:
             await send_preview_to_group(movie_entry, context)
 
-        # Clear the session
-        del upload_sessions[user_id]
+        # 🕒 Keep session briefly (do NOT delete immediately)
+        session["completed_at"] = time.time()
 
     except Exception as e:
         # 🔓 Rollback save flag on failure
-        session['saved'] = False
+        session["saved"] = False
 
-        logging.error(f"Database error: {str(e)}")
-        
-        # Use the proper way to send error message
+        logging.error(f"Database error: {e}")
+
+        error_text = sanitize_unicode(
+            "❌ Failed to add the movie. Please try again later."
+        )
+
         if update.callback_query:
-            await update.callback_query.message.reply_text(
-                sanitize_unicode("❌ Failed to add the movie. Please try again later.")
-            )
+            await update.callback_query.message.reply_text(error_text)
         elif update.message:
-            await update.message.reply_text(
-                sanitize_unicode("❌ Failed to add the movie. Please try again later.")
-            )
+            await update.message.reply_text(error_text)
         else:
             await context.bot.send_message(
                 chat_id=user_id,
-                text=sanitize_unicode("❌ Failed to add the movie. Please try again later.")
+                text=error_text
             )
-            
+
 
 async def send_preview_to_group(movie_entry, context):
     """Send the movie preview to the search group."""
@@ -614,12 +626,10 @@ async def add_movie(update: Update, context: CallbackContext):
         return
 
     user_id = update.effective_user.id
-    
+
     # 🚫 RESTRICT UPLOADS TO ADMINS ONLY
     if not is_admin(user_id):
-        await update.message.reply_text(
-            "❌ Only admins can upload files."
-        )
+        await update.message.reply_text("❌ Only admins can upload files.")
         return
 
     # Create or get upload session
@@ -629,7 +639,8 @@ async def add_movie(update: Update, context: CallbackContext):
         'movie_name': None,
         'awaiting_name_edit': False,
         'name_confirmed': False,
-        'saved': False      # ✅ REQUIRED
+        'saved': False,
+        'user_id': user_id
     })
 
     # =========================
@@ -638,21 +649,20 @@ async def add_movie(update: Update, context: CallbackContext):
     if update.message.document:
         file_info = update.message.document
         cleaned_name = clean_filename(file_info.file_name)
-        
+
         # Extract language
         language = extract_language_from_filename(cleaned_name)
-        
+
         session['files'].append({
             'file_id': file_info.file_id,
             'file_name': cleaned_name,
-            'language': language  # Add language
+            'language': language
         })
 
         # Set movie name from first file only
         if not session['movie_name']:
             session['movie_name'] = cleaned_name
 
-        # ✅ NO EDIT / CONTINUE HERE
         await update.message.reply_text(
             sanitize_unicode(f"➕ File added: {cleaned_name}")
         )
@@ -661,7 +671,7 @@ async def add_movie(update: Update, context: CallbackContext):
     # ======================
     # 🖼️ HANDLE IMAGE UPLOAD
     # ======================
-    elif update.message.photo:
+    if update.message.photo:
 
         # ❌ Block image before files
         if not session['files']:
@@ -685,7 +695,7 @@ async def add_movie(update: Update, context: CallbackContext):
             sanitize_unicode("🖼 Image received")
         )
 
-        # 🔥 ASK EDIT / CONTINUE ONLY ONCE – FINAL STEP
+        # 🔥 ASK EDIT / CONTINUE ONLY ONCE
         if not session['name_confirmed']:
             keyboard = InlineKeyboardMarkup([
                 [
@@ -702,8 +712,15 @@ async def add_movie(update: Update, context: CallbackContext):
                 reply_markup=keyboard
             )
         else:
-            # Already confirmed name - save immediately
-            await check_and_save_movie(user_id, update, context)
+            # Name already confirmed → save safely
+            if (
+                session["files"]
+                and session["image"]
+                and session["movie_name"]
+                and session["name_confirmed"]
+                and not session["saved"]
+            ):
+                await check_and_save_movie(user_id, update, context)
 
 # ============================
 # SEARCH HANDLER
@@ -1220,8 +1237,6 @@ async def main():
         await start_web_server()
 
         application = ApplicationBuilder().token(TOKEN).build()
-        
-        from telegram.ext import filters
         
         # HANDLER ORDER MATTERS! Add specific handlers first
 
