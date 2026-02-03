@@ -1001,13 +1001,15 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to delete movies - ONLY in private chat."""
 
     user_id = update.effective_user.id
-    # 🚫 ADMIN CHECK (works for command + button)
+
+    # 🚫 ADMIN CHECK
     if not is_admin(user_id):
         if update.message:
             await update.message.reply_text("❌ Only admins can use this command.")
         elif update.callback_query:
             await update.callback_query.message.reply_text("❌ Only admins can use this command.")
         return
+
     # 🔒 PRIVATE CHAT ONLY
     if update.message:
         if update.effective_chat.type != "private":
@@ -1036,20 +1038,25 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         .limit(PAGE_SIZE)
     )
 
+    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+
     if not movies:
         text = "No movies found."
     else:
-        text = f"🎬 **Total movies stored: {total}**\n\n"
+        text = (
+            f"🎬 **Total movies stored: {total}**\n"
+            f"📄 **Page {page} / {total_pages}**\n\n"
+        )
         for i, movie in enumerate(movies, start=skip + 1):
             text += f"{i}. {movie.get('name', 'Unknown Movie')}\n"
 
-    # 💾 Save session for delete-by-number
+    # 💾 Save session
     delete_sessions[user_id] = {
         "page": page,
         "movies": movies
     }
 
-    # ⬅️➡️ Navigation buttons
+    # ⬅️➡️ Buttons
     keyboard = []
 
     nav = []
@@ -1071,7 +1078,7 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # 📤 Send / Edit message safely
+    # 📤 Send / Edit
     if update.message:
         await update.message.reply_text(
             text,
