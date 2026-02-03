@@ -1001,7 +1001,6 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to delete movies - ONLY in private chat."""
 
     user_id = update.effective_user.id
-
     # 🚫 ADMIN CHECK (works for command + button)
     if not is_admin(user_id):
         if update.message:
@@ -1009,7 +1008,6 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif update.callback_query:
             await update.callback_query.message.reply_text("❌ Only admins can use this command.")
         return
-
     # 🔒 PRIVATE CHAT ONLY
     if update.message:
         if update.effective_chat.type != "private":
@@ -1065,6 +1063,10 @@ async def list_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard.append([
         InlineKeyboardButton("🗑 Delete", callback_data="ask_delete")
+    ])
+
+    keyboard.append([
+        InlineKeyboardButton("🔙 Back To Home", callback_data="menu_home")
     ])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
