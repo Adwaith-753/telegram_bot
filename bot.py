@@ -1195,19 +1195,18 @@ async def start_menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await menu_close(update, context)
 
     elif data == "cmd_start":
-        await query.message.reply_text("/start")
+        await start(update, context)
 
     elif data == "cmd_delete":
-        await query.message.reply_text("/delete")
+        await list_movies(update, context)
 
     elif data == "cmd_id":
-        await query.message.reply_text("/id")
+        await id_command(update, context)
 
     elif data == "cmd_admin":
-        await query.message.reply_text("/admin")
+        await admin_command(update, context)
 
         
-
 # ============================
 # WEB SERVER & KEEP AWAKE
 # ============================
