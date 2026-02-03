@@ -1271,7 +1271,7 @@ async def main():
         application.add_handler(CommandHandler("admin", admin_command))
 
         # 2. Callback handlers
-        application.add_handler(CallbackQueryHandler(start_menu_router, pattern="^menu_"))
+        application.add_handler(CallbackQueryHandler(start_menu_router, pattern="^(menu_|cmd_)"))
         application.add_handler(CallbackQueryHandler(language_callback_handler, pattern="^lang_"))
         application.add_handler(CallbackQueryHandler(name_decision_handler, pattern="^(edit_name|continue_name)$"))
         application.add_handler(CallbackQueryHandler(callback_router,pattern="^(page:|ask_delete|confirm_del:|cancel_del)"))
