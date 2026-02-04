@@ -511,11 +511,21 @@ async def start(update: Update, context: CallbackContext):
     )
 
 async def list_movies(update: Update, context: CallbackContext):
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ Admin only command.")
+    # 🔐 Admin check
+    user_id = (
+        update.effective_user.id
+        if update.effective_user
+        else update.callback_query.from_user.id
+    )
+
+    if user_id not in ADMIN_IDS:
+        if update.message:
+            await update.message.reply_text("❌ Admin only command.")
+        else:
+            await update.callback_query.answer("❌ Admin only command.", show_alert=True)
         return
 
-    # Get page number
+    # 📄 Get page number
     try:
         page = int(context.args[0]) if context.args else 1
     except ValueError:
@@ -525,15 +535,27 @@ async def list_movies(update: Update, context: CallbackContext):
 
     total = collection.count_documents({})
     if total == 0:
-        await update.message.reply_text("❌ No movies found.")
+        text = "❌ No movies found."
+        if update.message:
+            await update.message.reply_text(text)
+        else:
+            await update.callback_query.message.edit_text(text)
         return
 
     total_pages = max(1, (total + LIST_LIMIT - 1) // LIST_LIMIT)
     page = min(page, total_pages)
 
     skip = (page - 1) * LIST_LIMIT
-    movies = list(collection.find().skip(skip).limit(LIST_LIMIT))
 
+    # 🔥 Newest movies first
+    movies = list(
+        collection.find()
+        .sort("_id", -1)
+        .skip(skip)
+        .limit(LIST_LIMIT)
+    )
+
+    # 📝 Message text
     text = (
         f"🎬 **Movie List**\n\n"
         f"📦 Total Movies: **{total}**\n"
@@ -543,7 +565,7 @@ async def list_movies(update: Update, context: CallbackContext):
     for i, movie in enumerate(movies, start=1):
         text += f"**{i}.** {movie.get('name', 'Unknown')}\n"
 
-    # 🔹 SAFE PAGINATION BUTTONS
+    # ⬅➡ Pagination buttons
     nav_buttons = []
 
     if page > 1:
@@ -565,11 +587,20 @@ async def list_movies(update: Update, context: CallbackContext):
         [InlineKeyboardButton("❌ Delete", callback_data=f"delete_page_{page}")]
     )
 
-    await update.message.reply_text(
-        text,
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.message:
+        await update.message.reply_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=reply_markup
+        )
+    else:
+        await update.callback_query.message.edit_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=reply_markup
+        )
 
 
 async def list_pagination_cb(update: Update, context: CallbackContext):
