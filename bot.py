@@ -52,7 +52,7 @@ delete_sessions = {}
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
-    datefmt='%Y-%m-%d %H:%M:%S %Z',  # Include timezone in the date format
+    datefmt='%Y-%m-d %H:%M:%S %Z',  # Include timezone in the date format
     handlers=[
         logging.StreamHandler(),  # Console output
         logging.FileHandler('bot.log', encoding='utf-8')  # Log to file
@@ -674,18 +674,9 @@ async def delete_text_handler(update: Update, context: CallbackContext):
 
     text = update.message.text.strip()
     
-    # Delete the user's input message and the "Delete Movie" instruction message
-    try:
-        await update.message.delete()
-        
-        # Find and delete the "Delete Movie" instruction message if it exists
-        if "instruction_message" in session:
-            await context.bot.delete_message(
-                chat_id=update.effective_chat.id,
-                message_id=session["instruction_message"]
-            )
-    except Exception as e:
-        logging.error(f"Error deleting messages: {e}")
+    # Store the user's message ID to delete it later
+    user_message_id = update.message.message_id
+    chat_id = update.effective_chat.id
 
     page = session["page"]
     skip = (page - 1) * LIST_LIMIT
@@ -706,6 +697,8 @@ async def delete_text_handler(update: Update, context: CallbackContext):
         return
 
     session["movie"] = movie
+    session["user_message_id"] = user_message_id
+    session["chat_id"] = chat_id
 
     keyboard = [
         [
@@ -723,7 +716,7 @@ async def delete_text_handler(update: Update, context: CallbackContext):
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
     
-    # Store the confirm message ID for potential cleanup
+    # Store the confirm message ID for cleanup
     session["confirm_message_id"] = confirm_msg.message_id
 
 
@@ -745,11 +738,34 @@ async def delete_confirm_cb(update: Update, context: CallbackContext):
 
     movie = session["movie"]
     
-    # Delete the "Confirm Delete" message
+    # Store the movie name BEFORE deletion
+    movie_name = movie['name']
+    
+    # Get message IDs for cleanup
+    chat_id = session.get("chat_id")
+    user_message_id = session.get("user_message_id")
+    confirm_message_id = session.get("confirm_message_id")
+    instruction_message_id = session.get("instruction_message_id")
+
+    # Clean up all intermediate messages
     try:
+        # Delete the confirm message (current message with Yes/No buttons)
         await query.message.delete()
+        
+        # Delete user's input message if we have the ID
+        if chat_id and user_message_id:
+            await context.bot.delete_message(chat_id=chat_id, message_id=user_message_id)
+        
+        # Delete confirm message if different from current message
+        if confirm_message_id and confirm_message_id != query.message.message_id:
+            await context.bot.delete_message(chat_id=chat_id, message_id=confirm_message_id)
+            
+        # Delete instruction message if exists
+        if instruction_message_id:
+            await context.bot.delete_message(chat_id=chat_id, message_id=instruction_message_id)
+            
     except Exception as e:
-        logging.error(f"Error deleting confirm message: {e}")
+        logging.error(f"Error cleaning up messages: {e}")
 
     if query.data == "confirm_delete":
         try:
@@ -778,8 +794,8 @@ async def delete_confirm_cb(update: Update, context: CallbackContext):
                 f"📄 Page: **{page}/{total_pages}**\n\n"
             )
 
-            for i, movie in enumerate(movies, start=1):
-                text += f"**{i}.** {movie.get('name', 'Unknown')}\n"
+            for i, mov in enumerate(movies, start=1):
+                text += f"**{i}.** {mov.get('name', 'Unknown')}\n"
 
             keyboard = []
 
@@ -803,27 +819,46 @@ async def delete_confirm_cb(update: Update, context: CallbackContext):
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             
-            # Send success message
-            await context.bot.send_message(
+            # Send success message that auto-deletes after 3 seconds
+            success_msg = await context.bot.send_message(
                 chat_id=user_id,
-                text=f"✅ **Movie deleted successfully!**\n\n🎬 {movie['name']}",
+                text=f"✅ **Movie deleted successfully!**\n\n🎬 {movie_name}",
                 parse_mode="Markdown"
             )
+            
+            # Auto-delete success message after 3 seconds
+            await asyncio.sleep(3)
+            try:
+                await success_msg.delete()
+            except:
+                pass
 
         except Exception as e:
             logging.error(f"Delete error: {e}")
-            await context.bot.send_message(
+            error_msg = await context.bot.send_message(
                 chat_id=user_id,
                 text="❌ Failed to delete movie."
             )
+            # Auto-delete error message after 3 seconds
+            await asyncio.sleep(3)
+            try:
+                await error_msg.delete()
+            except:
+                pass
 
     else:
-        # Send cancellation message
-        await context.bot.send_message(
+        # Send cancellation message that auto-deletes after 3 seconds
+        cancel_msg = await context.bot.send_message(
             chat_id=user_id,
-            text="❎ **Delete cancelled.**",
+            text=f"❎ **Delete cancelled for:**\n\n🎬 {movie_name}",
             parse_mode="Markdown"
         )
+        # Auto-delete cancellation message after 3 seconds
+        await asyncio.sleep(3)
+        try:
+            await cancel_msg.delete()
+        except:
+            pass
 
     # 🧹 Clear delete session
     delete_sessions.pop(user_id, None)
