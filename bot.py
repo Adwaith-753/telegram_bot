@@ -415,10 +415,8 @@ async def name_decision_handler(update: Update, context: CallbackContext):
 
     session = upload_sessions.get(user_id)
 
-    if not session:
-        await query.message.reply_text(
-            "❌ Session expired. Please upload again."
-        )
+    # 🔕 Silent ignore if already completed
+    if not session or session.get("saved"):
         return
 
     # ✏️ EDIT NAME FLOW
@@ -447,7 +445,9 @@ async def name_decision_handler(update: Update, context: CallbackContext):
         session["awaiting_name_edit"] = False
         session["name_confirmed"] = True
 
-        # ✅ Confirm name ONCE
+        # 🔒 Disable buttons immediately
+        await query.message.edit_reply_markup(reply_markup=None)
+
         await query.message.reply_text(
             f"✅ Name confirmed:\n\n**{session['movie_name']}**",
             parse_mode="Markdown"
