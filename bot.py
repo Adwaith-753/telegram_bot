@@ -444,54 +444,68 @@ async def get_movie_files(update: Update, context: CallbackContext):
         )
 
 async def start(update: Update, context: CallbackContext):
-    """Handle the /start command with default features or deep link for movies."""
-    user_name = update.effective_user.full_name or "there"
-    args = context.args
+    """Handle the /start command in bot PM and deep links."""
+    
+    user = update.effective_user
+    chat = update.effective_chat
 
-    if args and len(args) > 0:
-        # Deep link with movie_id
-        movie_id = args[0]
-        
-        # Fetch movie details from database
+    # If /start has deep-link args (movie download)
+    if context.args:
+        movie_id = context.args[0]
         movie = collection.find_one({"movie_id": movie_id})
-        
+
         if movie:
             name = movie.get('name', 'Unknown Movie')
             media = movie.get('media', {})
             image_file_id = media.get('image', {}).get('file_id')
             documents = media.get('documents', [])
 
-            # Send image preview if available
             if image_file_id:
-                try:
-                    await update.message.reply_photo(
-                        photo=image_file_id,
-                        caption=sanitize_unicode(f"🎥 **{name}**\n\nFiles available: {len(documents)}"),
-                        parse_mode="Markdown"
-                    )
-                except Exception as e:
-                    logging.error(f"Error sending movie details: {sanitize_unicode(str(e))}")
-            # Send movie files
-            for doc in documents:
-                document_file_id = doc.get('file_id')
-                document_file_name = doc.get('file_name', 'movie_file')
-                if document_file_id:
-                    try:
-                        await context.bot.send_document(
-                            chat_id=update.effective_chat.id,
-                            document=document_file_id
-                        )
-                    except Exception as e:
-                        logging.error(f"Error sending file: {sanitize_unicode(str(e))}")
+                await update.message.reply_photo(
+                    photo=image_file_id,
+                    caption=sanitize_unicode(f"🎥 **{name}**\n\n📁 Files: {len(documents)}"),
+                    parse_mode="Markdown"
+                )
 
-            return
-    # Default behavior when no movie_id is provided
-    keyboard = [[InlineKeyboardButton("Add me to your chat! 🤖", url="https://t.me/+8h2UInNOV-o5YzI1")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
+            for doc in documents:
+                if doc.get('file_id'):
+                    await context.bot.send_document(
+                        chat_id=chat.id,
+                        document=doc['file_id']
+                    )
+        return
+
+    # ---- NORMAL /START IN BOT PM ----
+    bot_name = context.bot.first_name
+    user_name = user.first_name or "User"
+
+    text = (
+        f"ʜᴇʏ {sanitize_unicode(user_name)} ,\n\n"
+        f"Mʏ Nᴀᴍᴇ ɪs {sanitize_unicode(bot_name)} ,\n"
+        f"ʏᴏᴜ ᴄᴀɴ ᴜsᴇ ᴍᴇ ɪɴ ʏᴏᴜʀ ɢʀᴏᴜᴘ ɪ ᴡɪʟʟ ɢɪᴠᴇ "
+        f"ᴍᴏᴠɪᴇs ᴏʀ sᴇʀɪᴇs ɪɴ ʏᴏᴜʀ ɢʀᴏᴜᴘ.!! 😍"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("➕ Add me to your chat 🤖", url=f"https://t.me/{context.bot.username}?startgroup=true")],
+
+        # Button row 1
+        [
+            InlineKeyboardButton("🎬 Button 1", callback_data="btn_1"),
+            InlineKeyboardButton("🍿 Button 2", callback_data="btn_2"),
+        ],
+
+        # Button row 2
+        [
+            InlineKeyboardButton("📺 Button 3", callback_data="btn_3"),
+            InlineKeyboardButton("⭐ Button 4", callback_data="btn_4"),
+        ],
+
+    ]
+
     await update.message.reply_text(
-        text=f"Hi {sanitize_unicode(user_name)}! 👋 Use me to search. 🎥",
-        reply_markup=reply_markup
+        sanitize_unicode(text),
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 # Define the /id command handler
