@@ -135,7 +135,8 @@ upload_sessions = defaultdict(lambda: {
     'image': None,
     'movie_name': None,
     'awaiting_name_edit': False,
-    'name_confirmed': False 
+    'name_confirmed': False,
+    'asked_name': False
 })
 
 async def name_decision_handler(update: Update, context: CallbackContext):
@@ -263,14 +264,8 @@ async def add_movie(update: Update, context: CallbackContext):
         return
 
     user_id = update.effective_user.id
-    session = upload_sessions.setdefault(user_id, {
-        'files': [],
-        'image': None,
-        'movie_name': None,
-        'awaiting_name_edit': False,
-        'name_confirmed': False
-    })
-
+    
+    session = upload_sessions[user_id]
     # ───────── DOCUMENT UPLOAD ─────────
     if update.message.document:
         file_info = update.message.document
@@ -281,32 +276,15 @@ async def add_movie(update: Update, context: CallbackContext):
             'file_name': cleaned_name
         })
 
-        # 🔹 FIRST FILE ONLY → detect name & ask edit/continue
+        # Detect name from first file (NO popup here)
         if not session['movie_name']:
             session['movie_name'] = cleaned_name
 
-            if user_id in ADMIN_IDS:
-                keyboard = [
-                    [
-                        InlineKeyboardButton("✏️ Edit Name", callback_data="edit_name"),
-                        InlineKeyboardButton("✅ Continue", callback_data="continue_name")
-                    ]
-                ]
-                await update.message.reply_text(
-                    sanitize_unicode(
-                        f"🎬 Detected Movie Name:\n\n**{cleaned_name}**\n\nEdit or continue?"
-                    ),
-                    parse_mode="Markdown",
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-                return  
-            
-        # 🔹 Additional files → no popup
         await update.message.reply_text(
             sanitize_unicode(f"✅ File added: {cleaned_name}")
         )
 
-        # Save if ready
+        # Save only if name already confirmed and image exists
         if session['name_confirmed']:
             await check_and_save_movie(user_id, update, context)
 
@@ -322,9 +300,35 @@ async def add_movie(update: Update, context: CallbackContext):
 
         await update.message.reply_text("🖼 Image received")
 
-        # Save if name already confirmed
+        # 🔥 ASK EDIT / CONTINUE HERE (FILE → IMAGE CASE)
+        if (
+            user_id in ADMIN_IDS
+            and session.get('movie_name')          # file already uploaded
+            and not session['asked_name']          # only once
+            and not session['name_confirmed']
+        ):
+            session['asked_name'] = True
+
+            keyboard = [
+                [
+                    InlineKeyboardButton("✏️ Edit Name", callback_data="edit_name"),
+                    InlineKeyboardButton("✅ Continue", callback_data="continue_name")
+                ]
+            ]
+
+            await update.message.reply_text(
+                sanitize_unicode(
+                    f"🎬 Detected Movie Name:\n\n**{session['movie_name']}**\n\nEdit or continue?"
+                ),
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
+
+        # Save only after confirmation
         if session['name_confirmed']:
             await check_and_save_movie(user_id, update, context)
+
                
 async def search_movie(update: Update, context: CallbackContext):
     """
