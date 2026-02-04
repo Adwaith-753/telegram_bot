@@ -578,7 +578,7 @@ async def list_pagination_cb(update: Update, context: CallbackContext):
 
     page = int(query.data.split("_")[1])
     context.args = [str(page)]
-    await list_movies(query, context)
+    await list_movies(update, context)
 
 
 async def delete_page_cb(update: Update, context: CallbackContext):
@@ -611,8 +611,7 @@ async def delete_text_handler(update: Update, context: CallbackContext):
 
     page = session["page"]
     skip = (page - 1) * LIST_LIMIT
-    movies = list(collection.find().skip(skip).limit(LIST_LIMIT))
-
+    movies = list(collection.find().sort("_id", -1).skip(skip).limit(LIST_LIMIT))
     movie = None
 
     if text.isdigit():
