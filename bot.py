@@ -161,8 +161,7 @@ async def name_decision_handler(update: Update, context: CallbackContext):
         await query.message.reply_text(f"✅ Name confirmed: **{session['movie_name']}**", parse_mode="Markdown")
         
         # Check if we can save the movie now
-        # Use query.message instead of update.message
-        await check_and_save_movie(user_id, update, context, query.message)
+        await check_and_save_movie(user_id, update, context)
 
 async def text_handler(update: Update, context: CallbackContext):
     """Handle text messages for movie name editing - ONLY IN STORAGE GROUP."""
@@ -185,10 +184,10 @@ async def text_handler(update: Update, context: CallbackContext):
         )
         
         # Check if we can save the movie now
-        await check_and_save_movie(user_id, update, context, update.message)
+        await check_and_save_movie(user_id, update, context)
         return
 
-async def check_and_save_movie(user_id, update, context, message=None):
+async def check_and_save_movie(user_id, update, context):
     """Check if all conditions are met and save the movie to database."""
     session = upload_sessions.get(user_id)
     
@@ -212,19 +211,9 @@ async def check_and_save_movie(user_id, update, context, message=None):
 
     try:
         collection.insert_one(movie_entry)
-        
-        # Use the provided message or update.message
-        msg_obj = message or update.message
-        if msg_obj:
-            await msg_obj.reply_text(
-                sanitize_unicode(f"✅ Successfully added movie: {session['movie_name']}")
-            )
-        else:
-            # Fallback: try to get message from callback query
-            if update.callback_query:
-                await update.callback_query.message.reply_text(
-                    sanitize_unicode(f"✅ Successfully added movie: {session['movie_name']}")
-                )
+        await update.message.reply_text(
+            sanitize_unicode(f"✅ Successfully added movie: {session['movie_name']}")
+        )
 
         # Send preview to search group
         if SEARCH_GROUP_ID:
@@ -235,15 +224,9 @@ async def check_and_save_movie(user_id, update, context, message=None):
         
     except Exception as e:
         logging.error(f"Database error: {str(e)}")
-        msg_obj = message or update.message
-        if msg_obj:
-            await msg_obj.reply_text(
-                sanitize_unicode("❌ Failed to add the movie. Please try again later.")
-            )
-        elif update.callback_query:
-            await update.callback_query.message.reply_text(
-                sanitize_unicode("❌ Failed to add the movie. Please try again later.")
-            )
+        await update.message.reply_text(
+            sanitize_unicode("❌ Failed to add the movie. Please try again later.")
+        )
 
 async def send_preview_to_group(movie_entry, context):
     """Send the movie preview to the search group."""
@@ -281,7 +264,7 @@ async def add_movie(update: Update, context: CallbackContext):
         return
 
     user_id = update.effective_user.id
-    
+
     session = upload_sessions[user_id]
     # ───────── DOCUMENT UPLOAD ─────────
     if update.message.document:
@@ -303,7 +286,7 @@ async def add_movie(update: Update, context: CallbackContext):
 
         # Save only if name already confirmed and image exists
         if session['name_confirmed']:
-            await check_and_save_movie(user_id, update, context, update.message)
+            await check_and_save_movie(user_id, update, context)
 
     # ───────── IMAGE UPLOAD ─────────
     elif update.message.photo:
@@ -344,7 +327,7 @@ async def add_movie(update: Update, context: CallbackContext):
 
         # Save only after confirmation
         if session['name_confirmed']:
-            await check_and_save_movie(user_id, update, context, update.message)
+            await check_and_save_movie(user_id, update, context)
 
                
 async def search_movie(update: Update, context: CallbackContext):
@@ -646,14 +629,20 @@ async def delete_page_cb(update: Update, context: CallbackContext):
 
     page = int(query.data.split("_")[2])
     user_id = query.from_user.id
-
-    delete_sessions[user_id] = {"page": page, "step": "ask", "list_message": query.message}
-
-    await query.message.reply_text(
+    
+    # Send the instruction message and store its ID
+    instruction_msg = await query.message.reply_text(
         "🗑 **Delete Movie**\n\n"
         "Send the **movie number (1–10)** OR **movie name** you want to delete.",
         parse_mode="Markdown"
     )
+    
+    delete_sessions[user_id] = {
+        "page": page, 
+        "step": "ask", 
+        "list_message": query.message,
+        "instruction_message": instruction_msg.message_id
+    }
 
 
 async def delete_text_handler(update: Update, context: CallbackContext):
@@ -667,6 +656,19 @@ async def delete_text_handler(update: Update, context: CallbackContext):
         return
 
     text = update.message.text.strip()
+    
+    # Delete the user's input message and the "Delete Movie" instruction message
+    try:
+        await update.message.delete()
+        
+        # Find and delete the "Delete Movie" instruction message if it exists
+        if "instruction_message" in session:
+            await context.bot.delete_message(
+                chat_id=update.effective_chat.id,
+                message_id=session["instruction_message"]
+            )
+    except Exception as e:
+        logging.error(f"Error deleting messages: {e}")
 
     page = session["page"]
     skip = (page - 1) * LIST_LIMIT
@@ -695,14 +697,17 @@ async def delete_text_handler(update: Update, context: CallbackContext):
         ]
     ]
 
-    await update.message.reply_text(
+    # Store the confirm message so we can delete it later
+    confirm_msg = await update.message.reply_text(
         f"⚠️ **Confirm Delete**\n\n"
         f"🎬 {movie['name']}\n\n"
         f"Do you want to delete this movie?",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
-
+    
+    # Store the confirm message ID for potential cleanup
+    session["confirm_message_id"] = confirm_msg.message_id
 
 async def delete_confirm_cb(update: Update, context: CallbackContext):
     query = update.callback_query
@@ -721,6 +726,12 @@ async def delete_confirm_cb(update: Update, context: CallbackContext):
         return
 
     movie = session["movie"]
+    
+    # Delete the "Confirm Delete" message
+    try:
+        await query.message.delete()
+    except Exception as e:
+        logging.error(f"Error deleting confirm message: {e}")
 
     if query.data == "confirm_delete":
         try:
@@ -773,20 +784,31 @@ async def delete_confirm_cb(update: Update, context: CallbackContext):
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
+            
+            # Send success message
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"✅ **Movie deleted successfully!**\n\n🎬 {movie['name']}",
+                parse_mode="Markdown"
+            )
 
         except Exception as e:
             logging.error(f"Delete error: {e}")
-            await query.message.reply_text("❌ Failed to delete movie.")
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="❌ Failed to delete movie."
+            )
 
     else:
-        await query.message.edit_text(
-            "❎ **Delete cancelled.**",
+        # Send cancellation message
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="❎ **Delete cancelled.**",
             parse_mode="Markdown"
         )
 
     # 🧹 Clear delete session
     delete_sessions.pop(user_id, None)
-
 
 # Define the /id command handler
 async def id_command(update: Update, context: CallbackContext):
