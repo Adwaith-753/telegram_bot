@@ -699,14 +699,52 @@ async def delete_confirm_cb(update: Update, context: CallbackContext):
             # 🗑 Delete movie
             collection.delete_one({"movie_id": movie["movie_id"]})
 
-            # 🔄 Refresh list
+            # 🔄 Refresh list (SAFE WAY)
             page = session["page"]
             list_message = session["list_message"]
 
-            context.args = [str(page)]
-            update.callback_query.message = list_message
+            total = collection.count_documents({})
+            total_pages = max(1, (total + LIST_LIMIT - 1) // LIST_LIMIT)
+            page = min(page, total_pages)
 
-            await list_movies(update, context)
+            skip = (page - 1) * LIST_LIMIT
+            movies = list(
+                collection.find()
+                .sort("_id", -1)
+                .skip(skip)
+                .limit(LIST_LIMIT)
+            )
+
+            text = (
+                f"🎬 **Movie List**\n\n"
+                f"📦 Total Movies: **{total}**\n"
+                f"📄 Page: **{page}/{total_pages}**\n\n"
+            )
+
+            for i, movie in enumerate(movies, start=1):
+                text += f"**{i}.** {movie.get('name', 'Unknown')}\n"
+
+            keyboard = []
+
+            if page > 1:
+                keyboard.append([
+                    InlineKeyboardButton("⬅ Prev", callback_data=f"list_{page - 1}")
+                ])
+
+            if page < total_pages:
+                keyboard.append([
+                    InlineKeyboardButton("➡ Next", callback_data=f"list_{page + 1}")
+                ])
+
+            keyboard.append(
+                [InlineKeyboardButton("❌ Delete", callback_data=f"delete_page_{page}")]
+            )
+
+            await list_message.edit_text(
+                text,
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
 
         except Exception as e:
             logging.error(f"Delete error: {e}")
