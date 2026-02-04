@@ -161,7 +161,8 @@ async def name_decision_handler(update: Update, context: CallbackContext):
         await query.message.reply_text(f"✅ Name confirmed: **{session['movie_name']}**", parse_mode="Markdown")
         
         # Check if we can save the movie now
-        await check_and_save_movie(user_id, update, context)
+        # Use query.message instead of update.message
+        await check_and_save_movie(user_id, update, context, query.message)
 
 async def text_handler(update: Update, context: CallbackContext):
     """Handle text messages for movie name editing - ONLY IN STORAGE GROUP."""
@@ -184,10 +185,10 @@ async def text_handler(update: Update, context: CallbackContext):
         )
         
         # Check if we can save the movie now
-        await check_and_save_movie(user_id, update, context)
+        await check_and_save_movie(user_id, update, context, update.message)
         return
 
-async def check_and_save_movie(user_id, update, context):
+async def check_and_save_movie(user_id, update, context, message=None):
     """Check if all conditions are met and save the movie to database."""
     session = upload_sessions.get(user_id)
     
@@ -211,9 +212,19 @@ async def check_and_save_movie(user_id, update, context):
 
     try:
         collection.insert_one(movie_entry)
-        await update.message.reply_text(
-            sanitize_unicode(f"✅ Successfully added movie: {session['movie_name']}")
-        )
+        
+        # Use the provided message or update.message
+        msg_obj = message or update.message
+        if msg_obj:
+            await msg_obj.reply_text(
+                sanitize_unicode(f"✅ Successfully added movie: {session['movie_name']}")
+            )
+        else:
+            # Fallback: try to get message from callback query
+            if update.callback_query:
+                await update.callback_query.message.reply_text(
+                    sanitize_unicode(f"✅ Successfully added movie: {session['movie_name']}")
+                )
 
         # Send preview to search group
         if SEARCH_GROUP_ID:
@@ -224,9 +235,15 @@ async def check_and_save_movie(user_id, update, context):
         
     except Exception as e:
         logging.error(f"Database error: {str(e)}")
-        await update.message.reply_text(
-            sanitize_unicode("❌ Failed to add the movie. Please try again later.")
-        )
+        msg_obj = message or update.message
+        if msg_obj:
+            await msg_obj.reply_text(
+                sanitize_unicode("❌ Failed to add the movie. Please try again later.")
+            )
+        elif update.callback_query:
+            await update.callback_query.message.reply_text(
+                sanitize_unicode("❌ Failed to add the movie. Please try again later.")
+            )
 
 async def send_preview_to_group(movie_entry, context):
     """Send the movie preview to the search group."""
@@ -286,7 +303,7 @@ async def add_movie(update: Update, context: CallbackContext):
 
         # Save only if name already confirmed and image exists
         if session['name_confirmed']:
-            await check_and_save_movie(user_id, update, context)
+            await check_and_save_movie(user_id, update, context, update.message)
 
     # ───────── IMAGE UPLOAD ─────────
     elif update.message.photo:
@@ -327,7 +344,7 @@ async def add_movie(update: Update, context: CallbackContext):
 
         # Save only after confirmation
         if session['name_confirmed']:
-            await check_and_save_movie(user_id, update, context)
+            await check_and_save_movie(user_id, update, context, update.message)
 
                
 async def search_movie(update: Update, context: CallbackContext):
