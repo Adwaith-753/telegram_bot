@@ -400,18 +400,19 @@ async def language_callback_handler(update: Update, context: ContextTypes.DEFAUL
 
 async def name_decision_handler(update: Update, context: CallbackContext):
     """Handle Edit / Continue button actions."""
+
     query = update.callback_query
-    await query.answer()
+    await query.answer()  # prevent Telegram resend
 
     user_id = query.from_user.id
-    
+
     # 🚫 RESTRICT TO ADMINS ONLY
     if not is_admin(user_id):
         await query.message.reply_text(
             "❌ Only admins can edit movie names."
         )
         return
-    
+
     session = upload_sessions.get(user_id)
 
     if not session:
@@ -420,34 +421,46 @@ async def name_decision_handler(update: Update, context: CallbackContext):
         )
         return
 
-    # ✏️ EDIT NAME
+    # ✏️ EDIT NAME FLOW
     if query.data == "edit_name":
-        session['awaiting_name_edit'] = True
+        # Stop if already saved
+        if session.get("saved"):
+            await query.message.reply_text(
+                "⚠️ Movie already saved. Upload a new one to edit."
+            )
+            return
+
+        session["awaiting_name_edit"] = True
 
         await query.message.reply_text(
             "✏️ Please send the new movie name:"
         )
         return
 
-    # ✅ CONTINUE
+    # ✅ CONTINUE FLOW
     elif query.data == "continue_name":
-        session['awaiting_name_edit'] = False
-        session['name_confirmed'] = True   # 🔥 IMPORTANT
 
+        # 🚫 Prevent double execution
+        if session.get("saved"):
+            return
+
+        session["awaiting_name_edit"] = False
+        session["name_confirmed"] = True
+
+        # ✅ Confirm name ONCE
         await query.message.reply_text(
             f"✅ Name confirmed:\n\n**{session['movie_name']}**",
             parse_mode="Markdown"
         )
 
-        # Save movie if everything is ready
-        # Check that we have all required data before saving
+        # ✅ Save ONLY if everything is ready
         if (
-            session['files']
-            and session['image']
-            and session['movie_name']
-            and session['name_confirmed']
+            session.get("files")
+            and session.get("image")
+            and session.get("movie_name")
         ):
             await check_and_save_movie(user_id, update, context)
+
 
 async def text_handler(update: Update, context: CallbackContext):
     """Handle movie name input after Edit button."""
