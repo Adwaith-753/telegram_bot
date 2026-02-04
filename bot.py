@@ -500,18 +500,16 @@ async def text_handler(update: Update, context: CallbackContext):
 async def check_and_save_movie(user_id, update, context):
     """Check if all conditions are met and save the movie to database."""
 
-    # ✅ Get session FIRST
     session = upload_sessions.get(user_id)
-
     if not session:
         return
 
-    # 🚫 HARD STOP if name not confirmed
-    if not session.get("name_confirmed"):
+    # 🚫 Stop if already processing or saved
+    if session.get("processing") or session.get("saved"):
         return
 
-    # 🚫 Prevent double save
-    if session.get("saved"):
+    # 🚫 Name must be confirmed
+    if not session.get("name_confirmed"):
         return
 
     # 🚫 Ensure required data exists
@@ -522,10 +520,10 @@ async def check_and_save_movie(user_id, update, context):
     ):
         return
 
-    # 🔒 Mark as saved BEFORE DB insert
+    # 🔒 HARD LOCK (prevents double execution)
+    session["processing"] = True
     session["saved"] = True
 
-    # Create movie entry
     movie_id = str(uuid.uuid4())
     movie_entry = {
         "movie_id": movie_id,
@@ -544,8 +542,9 @@ async def check_and_save_movie(user_id, update, context):
             f"✅ Successfully added movie:\n\n🎬 **{session['movie_name']}**"
         )
 
-        # ✅ Respond safely depending on update type
+        # ✅ Respond ONLY ONCE
         if update.callback_query:
+            await update.callback_query.answer()  # 🔥 important
             await update.callback_query.message.reply_text(
                 success_text, parse_mode="Markdown"
             )
@@ -553,23 +552,17 @@ async def check_and_save_movie(user_id, update, context):
             await update.message.reply_text(
                 success_text, parse_mode="Markdown"
             )
-        else:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=success_text,
-                parse_mode="Markdown"
-            )
 
         # ✅ Send preview to search group
         if SEARCH_GROUP_ID:
             await send_preview_to_group(movie_entry, context)
 
-        # 🕒 Keep session briefly (do NOT delete immediately)
         session["completed_at"] = time.time()
 
     except Exception as e:
-        # 🔓 Rollback save flag on failure
+        # 🔓 Rollback locks
         session["saved"] = False
+        session["processing"] = False
 
         logging.error(f"Database error: {e}")
 
@@ -578,15 +571,10 @@ async def check_and_save_movie(user_id, update, context):
         )
 
         if update.callback_query:
+            await update.callback_query.answer()
             await update.callback_query.message.reply_text(error_text)
         elif update.message:
             await update.message.reply_text(error_text)
-        else:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=error_text
-            )
-
 
 async def send_preview_to_group(movie_entry, context):
     """Send the movie preview to the search group."""
