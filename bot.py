@@ -46,7 +46,8 @@ SEARCH_GROUP_ID = int(os.getenv('SEARCH_GROUP_ID'))
 STORAGE_GROUP_ID = int(os.getenv('STORAGE_GROUP_ID'))
 ADMIN_IDS = set(int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip())
 PORT = int(os.getenv('PORT', 8088))  # Default to 8088 if not set
-
+LIST_LIMIT = 10
+delete_sessions = {}
 # Logging Configuration
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -509,6 +510,177 @@ async def start(update: Update, context: CallbackContext):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+async def list_movies(update: Update, context: CallbackContext):
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+
+    # Get page number
+    try:
+        page = int(context.args[0]) if context.args else 1
+    except ValueError:
+        page = 1
+
+    page = max(page, 1)
+
+    total = collection.count_documents({})
+    if total == 0:
+        await update.message.reply_text("❌ No movies found.")
+        return
+
+    total_pages = max(1, (total + LIST_LIMIT - 1) // LIST_LIMIT)
+    page = min(page, total_pages)
+
+    skip = (page - 1) * LIST_LIMIT
+    movies = list(collection.find().skip(skip).limit(LIST_LIMIT))
+
+    text = (
+        f"🎬 **Movie List**\n\n"
+        f"📦 Total Movies: **{total}**\n"
+        f"📄 Page: **{page}/{total_pages}**\n\n"
+    )
+
+    for i, movie in enumerate(movies, start=1):
+        text += f"**{i}.** {movie.get('name', 'Unknown')}\n"
+
+    # 🔹 SAFE PAGINATION BUTTONS
+    nav_buttons = []
+
+    if page > 1:
+        nav_buttons.append(
+            InlineKeyboardButton("⬅ Prev", callback_data=f"list_{page - 1}")
+        )
+
+    if page < total_pages:
+        nav_buttons.append(
+            InlineKeyboardButton("➡ Next", callback_data=f"list_{page + 1}")
+        )
+
+    keyboard = []
+
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+
+    keyboard.append(
+        [InlineKeyboardButton("❌ Delete", callback_data=f"delete_page_{page}")]
+    )
+
+    await update.message.reply_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def list_pagination_cb(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+
+    page = int(query.data.split("_")[1])
+    context.args = [str(page)]
+    await list_movies(query, context)
+
+
+async def delete_page_cb(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+
+    page = int(query.data.split("_")[2])
+    user_id = query.from_user.id
+
+    delete_sessions[user_id] = {"page": page, "step": "ask"}
+
+    await query.message.reply_text(
+        "🗑 **Delete Movie**\n\n"
+        "Send the **movie number (1–10)** OR **movie name** you want to delete.",
+        parse_mode="Markdown"
+    )
+
+
+async def delete_text_handler(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+
+    if user_id not in ADMIN_IDS:
+        return
+
+    session = delete_sessions.get(user_id)
+    if not session:
+        return
+
+    text = update.message.text.strip()
+
+    page = session["page"]
+    skip = (page - 1) * LIST_LIMIT
+    movies = list(collection.find().skip(skip).limit(LIST_LIMIT))
+
+    movie = None
+
+    if text.isdigit():
+        idx = int(text) - 1
+        if 0 <= idx < len(movies):
+            movie = movies[idx]
+    else:
+        movie = collection.find_one({
+            "name": {"$regex": re.escape(text), "$options": "i"}
+        })
+
+    if not movie:
+        await update.message.reply_text("❌ Movie not found. Try again.")
+        return
+
+    session["movie"] = movie
+
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Yes", callback_data="confirm_delete"),
+            InlineKeyboardButton("❌ No", callback_data="cancel_delete"),
+        ]
+    ]
+
+    await update.message.reply_text(
+        f"⚠️ **Confirm Delete**\n\n"
+        f"🎬 {movie['name']}\n\n"
+        f"Do you want to delete this movie?",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def delete_confirm_cb(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+
+    # 🔐 Admin-only protection
+    if user_id not in ADMIN_IDS:
+        await query.message.reply_text("❌ You are not authorized to delete movies.")
+        return
+
+    session = delete_sessions.get(user_id)
+    if not session or "movie" not in session:
+        await query.message.reply_text("⚠️ Delete session expired.")
+        return
+
+    movie = session["movie"]
+
+    if query.data == "confirm_delete":
+        try:
+            collection.delete_one({"movie_id": movie["movie_id"]})
+            await query.message.edit_text(
+                f"✅ **Deleted Successfully**\n\n🎬 {movie['name']}",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logging.error(f"Delete error: {e}")
+            await query.message.reply_text("❌ Failed to delete movie.")
+
+    else:
+        await query.message.edit_text("❎ **Delete cancelled.**", parse_mode="Markdown")
+
+    # 🧹 Clear delete session
+    delete_sessions.pop(user_id, None)
+
 
 # Define the /id command handler
 async def id_command(update: Update, context: CallbackContext):
@@ -573,47 +745,38 @@ async def main():
         await start_web_server()
 
         application = ApplicationBuilder().token(TOKEN).build()
-        
-        # Add import for filters
-        from telegram.ext import filters
-        
-        # HANDLER ORDER MATTERS! Add specific handlers first
-        
-        # 1. Command handlers
+
+        # COMMAND HANDLERS
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("id", id_command))
-        
-        # 2. Callback query handlers
-        application.add_handler(CallbackQueryHandler(name_decision_handler, pattern="^(edit_name|continue_name)$"))
+        application.add_handler(CommandHandler("list", list_movies))
+
+        # CALLBACKS
+        application.add_handler(CallbackQueryHandler(name_decision_handler,pattern="^(edit_name|continue_name)$"))
+        application.add_handler(CallbackQueryHandler(list_pagination_cb,pattern="^list_"))
+        application.add_handler(CallbackQueryHandler(delete_page_cb,pattern="^delete_page_"))
+        application.add_handler(CallbackQueryHandler(delete_confirm_cb,pattern="^(confirm_delete|cancel_delete)$"))
         application.add_handler(CallbackQueryHandler(get_movie_files))
-        
-        # 3. File/Photo upload handlers - ONLY in storage group
-        application.add_handler(MessageHandler(
-            filters.Document.ALL & filters.Chat(STORAGE_GROUP_ID), 
-            add_movie
-        ))
-        application.add_handler(MessageHandler(
-            filters.PHOTO & filters.Chat(STORAGE_GROUP_ID), 
-            add_movie
-        ))
-        
-        # 4. Text handler - ONLY in storage group (for name editing)
-        application.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND & filters.Chat(STORAGE_GROUP_ID),
-            text_handler
-        ))
-        
-        # 5. Search handler - ONLY in search group
-        application.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND & filters.Chat(SEARCH_GROUP_ID),
-            search_movie
-        ))
+
+        # STORAGE GROUP
+        application.add_handler(MessageHandler(filters.Document.ALL & filters.Chat(STORAGE_GROUP_ID),add_movie))
+        application.add_handler(MessageHandler(filters.PHOTO & filters.Chat(STORAGE_GROUP_ID),add_movie))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Chat(STORAGE_GROUP_ID),text_handler))
+
+        # SEARCH GROUP
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Chat(SEARCH_GROUP_ID),search_movie))
+
+        # ADMIN DELETE INPUT (SAFE)
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,delete_text_handler))
 
         await application.run_polling()
+
     except Exception as e:
         logging.error(f"Main loop error: {e}")
+
     finally:
         logging.info("Shutting down bot...")
+
 
 if __name__ == "__main__":
     try:
