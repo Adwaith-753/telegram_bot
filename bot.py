@@ -619,7 +619,7 @@ async def delete_page_cb(update: Update, context: CallbackContext):
     page = int(query.data.split("_")[2])
     user_id = query.from_user.id
 
-    delete_sessions[user_id] = {"page": page, "step": "ask"}
+    delete_sessions[user_id] = {"page": page, "step": "ask", "list_message": query.message}
 
     await query.message.reply_text(
         "🗑 **Delete Movie**\n\n"
@@ -684,29 +684,39 @@ async def delete_confirm_cb(update: Update, context: CallbackContext):
 
     # 🔐 Admin-only protection
     if user_id not in ADMIN_IDS:
-        await query.message.reply_text("❌ You are not authorized to delete movies.")
+        await query.answer("❌ Not authorized", show_alert=True)
         return
 
     session = delete_sessions.get(user_id)
     if not session or "movie" not in session:
-        await query.message.reply_text("⚠️ Delete session expired.")
+        await query.answer("⚠️ Delete session expired", show_alert=True)
         return
 
     movie = session["movie"]
 
     if query.data == "confirm_delete":
         try:
+            # 🗑 Delete movie
             collection.delete_one({"movie_id": movie["movie_id"]})
-            await query.message.edit_text(
-                f"✅ **Deleted Successfully**\n\n🎬 {movie['name']}",
-                parse_mode="Markdown"
-            )
+
+            # 🔄 Refresh list
+            page = session["page"]
+            list_message = session["list_message"]
+
+            context.args = [str(page)]
+            update.callback_query.message = list_message
+
+            await list_movies(update, context)
+
         except Exception as e:
             logging.error(f"Delete error: {e}")
             await query.message.reply_text("❌ Failed to delete movie.")
 
     else:
-        await query.message.edit_text("❎ **Delete cancelled.**", parse_mode="Markdown")
+        await query.message.edit_text(
+            "❎ **Delete cancelled.**",
+            parse_mode="Markdown"
+        )
 
     # 🧹 Clear delete session
     delete_sessions.pop(user_id, None)
