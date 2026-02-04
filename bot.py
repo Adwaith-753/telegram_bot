@@ -628,10 +628,6 @@ async def add_movie(update: Update, context: CallbackContext):
 
     user_id = update.effective_user.id
 
-    # 🚫 RESTRICT UPLOADS TO ADMINS ONLY
-    if not is_admin(user_id):
-        await update.message.reply_text("❌ Only admins can upload files.")
-        return
 
     # Create or get upload session
     session = upload_sessions.setdefault(user_id, {
