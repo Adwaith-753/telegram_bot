@@ -395,11 +395,54 @@ async def language_callback_handler(update: Update, context: ContextTypes.DEFAUL
             await send_language_files(update, context, movie_id, language)
 
 # ============================
+# 🔥 NEW FUNCTION: Show Edit/Continue Prompt
+# ============================
+
+async def show_name_confirmation(update: Update, context: CallbackContext, user_id: int):
+    """
+    Show the Edit/Continue prompt for movie name.
+    This function can be called multiple times in a loop.
+    """
+    session = upload_sessions.get(user_id)
+    
+    if not session or session.get("saved"):
+        return
+    
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✏️ Edit Name", callback_data="edit_name"),
+            InlineKeyboardButton("✅ Continue", callback_data="continue_name")
+        ]
+    ])
+    
+    message_text = sanitize_unicode(
+        f"🎬 Detected Movie Name:\n\n**{session['movie_name']}**\n\nEdit or continue?"
+    )
+    
+    # Send new confirmation message
+    if update.message:
+        sent_message = await update.message.reply_text(
+            message_text,
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+    elif update.callback_query:
+        sent_message = await update.callback_query.message.reply_text(
+            message_text,
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+    
+    # Store message ID to delete later
+    session["last_prompt_message_id"] = sent_message.message_id
+    session["last_prompt_chat_id"] = sent_message.chat_id
+
+# ============================
 # UPLOAD HANDLERS
 # ============================
 
 async def name_decision_handler(update: Update, context: CallbackContext):
-    """Handle Edit / Continue button actions."""
+    """Handle Edit / Continue button actions - WITH LOOPING."""
 
     query = update.callback_query
     await query.answer()  # prevent Telegram resend
@@ -429,9 +472,16 @@ async def name_decision_handler(update: Update, context: CallbackContext):
             return
 
         session["awaiting_name_edit"] = True
+        
+        # 🔒 Delete the current prompt message
+        try:
+            await query.message.delete()
+        except:
+            pass
 
         await query.message.reply_text(
-            "✏️ Please send the new movie name:"
+            "✏️ **Please send the new movie name:**",
+            parse_mode="Markdown"
         )
         return
 
@@ -445,11 +495,14 @@ async def name_decision_handler(update: Update, context: CallbackContext):
         session["awaiting_name_edit"] = False
         session["name_confirmed"] = True
 
-        # 🔒 Disable buttons immediately
-        await query.message.edit_reply_markup(reply_markup=None)
+        # 🔒 Delete the prompt message
+        try:
+            await query.message.delete()
+        except:
+            pass
 
         await query.message.reply_text(
-            f"✅ Name confirmed:\n\n**{session['movie_name']}**",
+            f"✅ **Name confirmed:**\n\n**{session['movie_name']}**",
             parse_mode="Markdown"
         )
 
@@ -463,7 +516,7 @@ async def name_decision_handler(update: Update, context: CallbackContext):
 
 
 async def text_handler(update: Update, context: CallbackContext):
-    """Handle movie name input after Edit button."""
+    """Handle movie name input after Edit button - WITH LOOPING."""
     
     # Only process in storage group
     if update.effective_chat.id != STORAGE_GROUP_ID:
@@ -494,21 +547,15 @@ async def text_handler(update: Update, context: CallbackContext):
     # Save edited name
     session['movie_name'] = new_name
     session['awaiting_name_edit'] = False
-    session['name_confirmed'] = True   # 🔥 IMPORTANT
+    # 🔥 DON'T confirm yet - show prompt again
 
     await update.message.reply_text(
-        f"✅ Movie name updated to:\n\n**{new_name}**",
+        f"✅ **Movie name updated to:**\n\n**{new_name}**",
         parse_mode="Markdown"
     )
 
-    # Save movie if everything is ready
-    if (
-        session['files']
-        and session['image']
-        and session['movie_name']
-        and session['name_confirmed']
-    ):
-        await check_and_save_movie(user_id, update, context)
+    # 🔄 LOOP BACK - Show Edit/Continue prompt again
+    await show_name_confirmation(update, context, user_id)
 
 async def check_and_save_movie(user_id, update, context):
     """Check if all conditions are met and save the movie to database."""
@@ -552,7 +599,7 @@ async def check_and_save_movie(user_id, update, context):
         collection.insert_one(movie_entry)
 
         success_text = sanitize_unicode(
-            f"✅ Successfully added movie:\n\n🎬 **{session['movie_name']}**"
+            f"✅ **Successfully added movie:**\n\n🎬 **{session['movie_name']}**"
         )
 
         # ✅ Respond ONLY ONCE
@@ -647,6 +694,11 @@ async def add_movie(update: Update, context: CallbackContext):
 
         # 🔄 RESET SESSION if previous movie already saved
         if session.get("saved"):
+            await update.message.reply_text(
+                "🎬 **New movie upload started!**\n"
+                "Previous upload completed.",
+                parse_mode="Markdown"
+            )
             upload_sessions[user_id] = {
                 'files': [],
                 'image': None,
@@ -706,22 +758,9 @@ async def add_movie(update: Update, context: CallbackContext):
             sanitize_unicode("🖼 Image received")
         )
 
-        # 🔥 ASK EDIT / CONTINUE ONLY ONCE
+        # 🔥 SHOW EDIT/CONTINUE PROMPT
         if not session['name_confirmed']:
-            keyboard = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("✏️ Edit Name", callback_data="edit_name"),
-                    InlineKeyboardButton("✅ Continue", callback_data="continue_name")
-                ]
-            ])
-
-            await update.message.reply_text(
-                sanitize_unicode(
-                    f"🎬 Detected Movie Name:\n\n**{session['movie_name']}**\n\nEdit or continue?"
-                ),
-                parse_mode="Markdown",
-                reply_markup=keyboard
-            )
+            await show_name_confirmation(update, context, user_id)
         else:
             # Name already confirmed → save safely
             if (
