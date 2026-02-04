@@ -696,6 +696,73 @@ async def id_command(update: Update, context: CallbackContext):
     # Send the response back to the user
     await update.message.reply_text(response)
 
+
+async def menu_buttons_cb(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "btn_1":  # 💬 Commands
+        text = (
+            "💬 **Available Commands**\n\n"
+            "🔹 /start – Start the bot\n"
+            "🔹 /id – Get your ID & group ID\n"
+            "🔹 /list – List movies (Admin only)\n"
+            "🔹 Send movie name – Search movies (Search Group)\n"
+        )
+
+        await query.message.edit_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅ Back", callback_data="back_home")]
+            ])
+        )
+
+    elif query.data == "btn_2":  # 📦 Source
+        await query.message.edit_text(
+            "📦 **Source**\n\nThis bot is private.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅ Back", callback_data="back_home")]
+            ])
+        )
+
+    elif query.data == "btn_3":  # 📊 Status
+        total = collection.count_documents({})
+        await query.message.edit_text(
+            f"📊 **Bot Status**\n\n🎬 Movies: **{total}**\n✅ Bot is online",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅ Back", callback_data="back_home")]
+            ])
+        )
+
+    elif query.data == "btn_4":  # ❌ Close
+        await query.message.delete()
+
+    elif query.data == "back_home":
+        await query.message.edit_text(
+            sanitize_unicode(
+                f"ʜᴇʏ ,\n\n"
+                f"Mʏ Nᴀᴍᴇ ɪs {context.bot.first_name} ,\n"
+                f"ʏᴏᴜ ᴄᴀɴ ᴜsᴇ ᴍᴇ ɪɴ ʏᴏᴜʀ ɢʀᴏᴜᴘ 😍"
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "➕ Add me to your chat 🤖",
+                    url=f"https://t.me/{context.bot.username}?startgroup=true"
+                )],
+                [
+                    InlineKeyboardButton("💬 Commands", callback_data="btn_1"),
+                    InlineKeyboardButton("📦 Source", callback_data="btn_2"),
+                ],
+                [
+                    InlineKeyboardButton("📊 Status", callback_data="btn_3"),
+                    InlineKeyboardButton("❌ Close", callback_data="btn_4"),
+                ],
+            ])
+        )
+
 async def start_web_server():
     """Start a web server for health checks."""
     async def handle_health(request):
@@ -755,6 +822,7 @@ async def main():
         application.add_handler(CallbackQueryHandler(list_pagination_cb,pattern="^list_"))
         application.add_handler(CallbackQueryHandler(delete_page_cb,pattern="^delete_page_"))
         application.add_handler(CallbackQueryHandler(delete_confirm_cb,pattern="^(confirm_delete|cancel_delete)$"))
+        application.add_handler(CallbackQueryHandler(menu_buttons_cb, pattern="^(btn_1|btn_2|btn_3|btn_4|back_home)$"))
         application.add_handler(CallbackQueryHandler(get_movie_files))
 
         # STORAGE GROUP
