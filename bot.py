@@ -131,11 +131,11 @@ def clean_filename(filename):
 
 # Temporary storage for incomplete movie uploads
 upload_sessions = defaultdict(lambda: {
-    'files': [], 
-    'image': None, 
+    'files': [],
+    'image': None,
     'movie_name': None,
     'awaiting_name_edit': False,
-    'user_id': None
+    'name_confirmed': False 
 })
 
 async def name_decision_handler(update: Update, context: CallbackContext):
@@ -156,6 +156,7 @@ async def name_decision_handler(update: Update, context: CallbackContext):
 
     elif query.data == "continue_name":
         session['awaiting_name_edit'] = False
+        session['name_confirmed'] = True
         await query.message.reply_text(f"✅ Name confirmed: **{session['movie_name']}**", parse_mode="Markdown")
         
         # Check if we can save the movie now
@@ -174,6 +175,7 @@ async def text_handler(update: Update, context: CallbackContext):
         new_name = sanitize_unicode(update.message.text.strip())
         session['movie_name'] = new_name
         session['awaiting_name_edit'] = False
+        session['name_confirmed'] = True
         
         await update.message.reply_text(
             f"✅ Movie name updated to:\n\n**{new_name}**",
@@ -192,7 +194,7 @@ async def check_and_save_movie(user_id, update, context):
         return
     
     # Check if we have all required data
-    if not (session['files'] and session['image'] and session['movie_name']):
+    if not (session['files'] and session['image'] and session['movie_name'] and session.get('name_confirmed')):
         return
     
     # Create movie entry
@@ -256,67 +258,72 @@ async def send_preview_to_group(movie_entry, context):
 
 async def add_movie(update: Update, context: CallbackContext):
     """Process movie uploads, cleaning filenames and managing sessions."""
-    
+
     if update.effective_chat.id != STORAGE_GROUP_ID:
         return
 
     user_id = update.effective_user.id
     session = upload_sessions.setdefault(user_id, {
-        'files': [], 
-        'image': None, 
+        'files': [],
+        'image': None,
         'movie_name': None,
-        'awaiting_name_edit': False
+        'awaiting_name_edit': False,
+        'name_confirmed': False
     })
-    
-    # Handle document (movie file) upload
+
+    # ───────── DOCUMENT UPLOAD ─────────
     if update.message.document:
         file_info = update.message.document
         cleaned_name = clean_filename(file_info.file_name)
-        
+
         session['files'].append({
             'file_id': file_info.file_id,
             'file_name': cleaned_name
         })
-        
-        # Set the movie name from the first file
+
+        # 🔹 FIRST FILE ONLY → detect name & ask edit/continue
         if not session['movie_name']:
             session['movie_name'] = cleaned_name
-        
-        # If user is admin, show edit options
-        if user_id in ADMIN_IDS:
-            keyboard = [
-                [
-                    InlineKeyboardButton("✏️ Edit Name", callback_data="edit_name"),
-                    InlineKeyboardButton("✅ Continue", callback_data="continue_name")
+
+            if user_id in ADMIN_IDS:
+                keyboard = [
+                    [
+                        InlineKeyboardButton("✏️ Edit Name", callback_data="edit_name"),
+                        InlineKeyboardButton("✅ Continue", callback_data="continue_name")
+                    ]
                 ]
-            ]
-            await update.message.reply_text(
-                sanitize_unicode(f"🎬 Detected Movie Name:\n\n**{cleaned_name}**\n\nEdit or continue?"),
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        else:
-            await update.message.reply_text(
-                sanitize_unicode(f"✅ File received: {cleaned_name}")
-            )
-            # For non-admin, check if we can save
+                await update.message.reply_text(
+                    sanitize_unicode(
+                        f"🎬 Detected Movie Name:\n\n**{cleaned_name}**\n\nEdit or continue?"
+                    ),
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+                return  
+            
+        # 🔹 Additional files → no popup
+        await update.message.reply_text(
+            sanitize_unicode(f"✅ File added: {cleaned_name}")
+        )
+
+        # Save if ready
+        if session['name_confirmed']:
             await check_and_save_movie(user_id, update, context)
-    
-    # Handle photo upload
+
+    # ───────── IMAGE UPLOAD ─────────
     elif update.message.photo:
-        image_info = update.message.photo
-        largest_photo = max(image_info, key=lambda photo: photo.width * photo.height)
-        
+        largest_photo = max(update.message.photo, key=lambda p: p.width * p.height)
+
         session['image'] = {
             'file_id': largest_photo.file_id,
             'width': largest_photo.width,
             'height': largest_photo.height
         }
-        
-        await update.message.reply_text(sanitize_unicode("🖼 Image received"))
-        
-        # Check if we can save (for non-admin or when not editing)
-        if user_id not in ADMIN_IDS or not session['awaiting_name_edit']:
+
+        await update.message.reply_text("🖼 Image received")
+
+        # Save if name already confirmed
+        if session['name_confirmed']:
             await check_and_save_movie(user_id, update, context)
                
 async def search_movie(update: Update, context: CallbackContext):
@@ -619,20 +626,13 @@ async def delete_page_cb(update: Update, context: CallbackContext):
     page = int(query.data.split("_")[2])
     user_id = query.from_user.id
 
-    # Send prompt and store it for later cleanup
-    prompt_msg = await query.message.reply_text(
+    delete_sessions[user_id] = {"page": page, "step": "ask", "list_message": query.message}
+
+    await query.message.reply_text(
         "🗑 **Delete Movie**\n\n"
         "Send the **movie number (1–10)** OR **movie name** you want to delete.",
         parse_mode="Markdown"
     )
-
-    delete_sessions[user_id] = {
-        "page": page,
-        "step": "ask",
-        "list_message": query.message,
-        "prompt_message": prompt_msg,
-        "messages_to_delete": [prompt_msg.message_id]  # Track messages to delete
-    }
 
 
 async def delete_text_handler(update: Update, context: CallbackContext):
@@ -646,9 +646,6 @@ async def delete_text_handler(update: Update, context: CallbackContext):
         return
 
     text = update.message.text.strip()
-
-    # Store the user's input message ID for deletion
-    session["messages_to_delete"].append(update.message.message_id)
 
     page = session["page"]
     skip = (page - 1) * LIST_LIMIT
@@ -677,16 +674,13 @@ async def delete_text_handler(update: Update, context: CallbackContext):
         ]
     ]
 
-    confirm_msg = await update.message.reply_text(
+    await update.message.reply_text(
         f"⚠️ **Confirm Delete**\n\n"
         f"🎬 {movie['name']}\n\n"
         f"Do you want to delete this movie?",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
-
-    # Store the confirmation message ID for deletion
-    session["messages_to_delete"].append(confirm_msg.message_id)
 
 
 async def delete_confirm_cb(update: Update, context: CallbackContext):
@@ -759,30 +753,15 @@ async def delete_confirm_cb(update: Update, context: CallbackContext):
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
 
-            # 🧹 Delete all tracked messages
-            for msg_id in session.get("messages_to_delete", []):
-                try:
-                    await context.bot.delete_message(
-                        chat_id=query.message.chat_id,
-                        message_id=msg_id
-                    )
-                except Exception as e:
-                    logging.error(f"Failed to delete message {msg_id}: {e}")
-
         except Exception as e:
             logging.error(f"Delete error: {e}")
             await query.message.reply_text("❌ Failed to delete movie.")
 
     else:
-        # User cancelled - delete all tracked messages
-        for msg_id in session.get("messages_to_delete", []):
-            try:
-                await context.bot.delete_message(
-                    chat_id=query.message.chat_id,
-                    message_id=msg_id
-                )
-            except Exception as e:
-                logging.error(f"Failed to delete message {msg_id}: {e}")
+        await query.message.edit_text(
+            "❎ **Delete cancelled.**",
+            parse_mode="Markdown"
+        )
 
     # 🧹 Clear delete session
     delete_sessions.pop(user_id, None)
