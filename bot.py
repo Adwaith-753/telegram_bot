@@ -647,6 +647,20 @@ async def add_movie(update: Update, context: CallbackContext):
     # 📁 HANDLE DOCUMENT UPLOAD
     # =========================
     if update.message.document:
+
+        # 🔄 RESET SESSION if previous movie already saved
+        if session.get("saved"):
+            upload_sessions[user_id] = {
+                'files': [],
+                'image': None,
+                'movie_name': None,
+                'awaiting_name_edit': False,
+                'name_confirmed': False,
+                'saved': False,
+                'user_id': user_id
+            }
+            session = upload_sessions[user_id]
+
         file_info = update.message.document
         cleaned_name = clean_filename(file_info.file_name)
 
