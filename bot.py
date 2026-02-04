@@ -619,13 +619,20 @@ async def delete_page_cb(update: Update, context: CallbackContext):
     page = int(query.data.split("_")[2])
     user_id = query.from_user.id
 
-    delete_sessions[user_id] = {"page": page, "step": "ask", "list_message": query.message}
-
-    await query.message.reply_text(
+    # Send prompt and store it for later cleanup
+    prompt_msg = await query.message.reply_text(
         "🗑 **Delete Movie**\n\n"
         "Send the **movie number (1–10)** OR **movie name** you want to delete.",
         parse_mode="Markdown"
     )
+
+    delete_sessions[user_id] = {
+        "page": page,
+        "step": "ask",
+        "list_message": query.message,
+        "prompt_message": prompt_msg,
+        "messages_to_delete": [prompt_msg.message_id]  # Track messages to delete
+    }
 
 
 async def delete_text_handler(update: Update, context: CallbackContext):
@@ -639,6 +646,9 @@ async def delete_text_handler(update: Update, context: CallbackContext):
         return
 
     text = update.message.text.strip()
+
+    # Store the user's input message ID for deletion
+    session["messages_to_delete"].append(update.message.message_id)
 
     page = session["page"]
     skip = (page - 1) * LIST_LIMIT
@@ -667,13 +677,16 @@ async def delete_text_handler(update: Update, context: CallbackContext):
         ]
     ]
 
-    await update.message.reply_text(
+    confirm_msg = await update.message.reply_text(
         f"⚠️ **Confirm Delete**\n\n"
         f"🎬 {movie['name']}\n\n"
         f"Do you want to delete this movie?",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
+
+    # Store the confirmation message ID for deletion
+    session["messages_to_delete"].append(confirm_msg.message_id)
 
 
 async def delete_confirm_cb(update: Update, context: CallbackContext):
@@ -746,15 +759,30 @@ async def delete_confirm_cb(update: Update, context: CallbackContext):
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
 
+            # 🧹 Delete all tracked messages
+            for msg_id in session.get("messages_to_delete", []):
+                try:
+                    await context.bot.delete_message(
+                        chat_id=query.message.chat_id,
+                        message_id=msg_id
+                    )
+                except Exception as e:
+                    logging.error(f"Failed to delete message {msg_id}: {e}")
+
         except Exception as e:
             logging.error(f"Delete error: {e}")
             await query.message.reply_text("❌ Failed to delete movie.")
 
     else:
-        await query.message.edit_text(
-            "❎ **Delete cancelled.**",
-            parse_mode="Markdown"
-        )
+        # User cancelled - delete all tracked messages
+        for msg_id in session.get("messages_to_delete", []):
+            try:
+                await context.bot.delete_message(
+                    chat_id=query.message.chat_id,
+                    message_id=msg_id
+                )
+            except Exception as e:
+                logging.error(f"Failed to delete message {msg_id}: {e}")
 
     # 🧹 Clear delete session
     delete_sessions.pop(user_id, None)
