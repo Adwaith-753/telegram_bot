@@ -538,7 +538,7 @@ async def start(update: Update, context: CallbackContext):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-async def delete_movies(update: Update, context: CallbackContext):
+async def list_movies(update: Update, context: CallbackContext):
     # 🔐 Admin check
     user_id = (
         update.effective_user.id
@@ -585,7 +585,7 @@ async def delete_movies(update: Update, context: CallbackContext):
 
     # 📝 Message text
     text = (
-        f"🗑 **Delete Movies**\n\n"
+        f"🎬 **Movie List**\n\n"
         f"📦 Total Movies: **{total}**\n"
         f"📄 Page: **{page}/{total_pages}**\n\n"
     )
@@ -637,7 +637,7 @@ async def list_pagination_cb(update: Update, context: CallbackContext):
 
     page = int(query.data.split("_")[1])
     context.args = [str(page)]
-    await delete_movies(update, context)
+    await list_movies(update, context)
 
 
 async def delete_page_cb(update: Update, context: CallbackContext):
@@ -892,7 +892,7 @@ async def menu_buttons_cb(update: Update, context: CallbackContext):
             "💬 **Available Commands**\n\n"
             "🔹 /start – Start the bot\n"
             "🔹 /id – Get your ID & group ID\n"
-            "🔹 /delete – movies List (Admin only)\n"
+            "🔹 /list – List movies (Admin only)\n"
             "🔹 Send movie name – Search movies (Search Group)\n"
         )
 
@@ -1001,7 +1001,7 @@ async def main():
         # COMMAND HANDLERS
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("id", id_command))
-        application.add_handler(CommandHandler("delete", delete_movies))
+        application.add_handler(CommandHandler("list", list_movies))
 
         # CALLBACKS
         application.add_handler(CallbackQueryHandler(name_decision_handler,pattern="^(edit_name|continue_name)$"))
