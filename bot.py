@@ -892,7 +892,7 @@ async def menu_buttons_cb(update: Update, context: CallbackContext):
             "💬 **Available Commands**\n\n"
             "🔹 /start – Start the bot\n"
             "🔹 /id – Get your ID & group ID\n"
-            "🔹 /delete – List movies (Admin only)\n"
+            "🔹 /delete – movies List (Admin only)\n"
             "🔹 Send movie name – Search movies (Search Group)\n"
         )
 
@@ -1001,7 +1001,7 @@ async def main():
         # COMMAND HANDLERS
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("id", id_command))
-        application.add_handler(CommandHandler("list", delete_movies))
+        application.add_handler(CommandHandler("delete", delete_movies))
 
         # CALLBACKS
         application.add_handler(CallbackQueryHandler(name_decision_handler,pattern="^(edit_name|continue_name)$"))
