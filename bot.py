@@ -487,7 +487,7 @@ async def start(update: Update, context: CallbackContext):
             name = movie.get('name', 'Unknown Movie')
             media = movie.get('media', {})
             image_file_id = media.get('image', {}).get('file_id')
-            documents = movie.get('media', {}).get('documents', [])
+            documents = media.get('documents', [])
 
             if image_file_id:
                 await update.message.reply_photo(
@@ -888,29 +888,20 @@ async def menu_buttons_cb(update: Update, context: CallbackContext):
     await query.answer()
 
     if query.data == "btn_1":  # 💬 Commands
-        text = "📌 **Available Commands**"
-        
-        keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("▶️ Start", callback_data="cmd_start"),
-                InlineKeyboardButton("🗑 Delete", callback_data="cmd_delete")
-            ],
-            [
-                InlineKeyboardButton("🆔 ID", callback_data="cmd_id"),
-                InlineKeyboardButton("👑 Admin", callback_data="cmd_admin")
-            ],
-            [
-                InlineKeyboardButton("📢 Broadcast", callback_data="cmd_broadcast")
-            ],
-            [
-                InlineKeyboardButton("🔙 Back To Home", callback_data="back_home")
-            ]
-        ])
+        text = (
+            "💬 **Available Commands**\n\n"
+            "🔹 /start – Start the bot\n"
+            "🔹 /id – Get your ID & group ID\n"
+            "🔹 /list – List movies (Admin only)\n"
+            "🔹 Send movie name – Search movies (Search Group)\n"
+        )
 
         await query.message.edit_text(
             text,
             parse_mode="Markdown",
-            reply_markup=keyboard
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅ Back", callback_data="back_home")]
+            ])
         )
 
     elif query.data == "btn_2":  # 📦 Source
@@ -957,27 +948,6 @@ async def menu_buttons_cb(update: Update, context: CallbackContext):
                 ],
             ])
         )
-    elif query.data == "cmd_start":
-        await query.answer("Use /start to begin using the bot", show_alert=True)
-        
-    elif query.data == "cmd_delete":
-        await query.answer("Use /list then click Delete button", show_alert=True)
-        
-    elif query.data == "cmd_id":
-        await query.answer("Use /id to get your ID and group ID", show_alert=True)
-        
-    elif query.data == "cmd_admin":
-        if query.from_user.id in ADMIN_IDS:
-            await query.answer("✅ You are an admin! Use /list to manage movies", show_alert=True)
-        else:
-            await query.answer("❌ You are not an admin", show_alert=True)
-            
-    elif query.data == "cmd_broadcast":
-        if query.from_user.id in ADMIN_IDS:
-            await query.answer("Broadcast feature coming soon!", show_alert=True)
-        else:
-            await query.answer("❌ Admin only feature", show_alert=True)
-
 
 async def start_web_server():
     """Start a web server for health checks."""
@@ -1038,7 +1008,7 @@ async def main():
         application.add_handler(CallbackQueryHandler(list_pagination_cb,pattern="^list_"))
         application.add_handler(CallbackQueryHandler(delete_page_cb,pattern="^delete_page_"))
         application.add_handler(CallbackQueryHandler(delete_confirm_cb,pattern="^(confirm_delete|cancel_delete)$"))
-        application.add_handler(CallbackQueryHandler(menu_buttons_cb, pattern="^(btn_1|btn_2|btn_3|btn_4|back_home|cmd_start|cmd_delete|cmd_id|cmd_admin|cmd_broadcast)$"))
+        application.add_handler(CallbackQueryHandler(menu_buttons_cb, pattern="^(btn_1|btn_2|btn_3|btn_4|back_home)$"))
         application.add_handler(CallbackQueryHandler(get_movie_files))
 
         # STORAGE GROUP
