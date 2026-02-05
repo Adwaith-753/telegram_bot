@@ -319,9 +319,9 @@ async def add_movie(update: Update, context: CallbackContext):
 
         # 🔥 ASK EDIT / CONTINUE HERE (FILE → IMAGE CASE)
         if (
-            user_id in ADMIN_IDS
-            and session.get('movie_name')          # file already uploaded
-            and not session['asked_name']          # only once
+           
+            session.get('movie_name')         
+            and not session['asked_name']        
             and not session['name_confirmed']
         ):
             session['asked_name'] = True
