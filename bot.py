@@ -52,7 +52,7 @@ delete_sessions = {}
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
-    datefmt='%Y-%m-d %H:%M:%S %Z',  # Include timezone in the date format
+    datefmt='%Y-%m-%d %H:%M:%S %Z',  # Include timezone in the date format
     handlers=[
         logging.StreamHandler(),  # Console output
         logging.FileHandler('bot.log', encoding='utf-8')  # Log to file
@@ -678,6 +678,14 @@ async def delete_text_handler(update: Update, context: CallbackContext):
     user_message_id = update.message.message_id
     chat_id = update.effective_chat.id
 
+    # Delete the instruction message IMMEDIATELY
+    instruction_message_id = session.get("instruction_message")
+    if instruction_message_id:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=instruction_message_id)
+        except Exception as e:
+            logging.error(f"Error deleting instruction message: {e}")
+
     page = session["page"]
     skip = (page - 1) * LIST_LIMIT
     movies = list(collection.find().sort("_id", -1).skip(skip).limit(LIST_LIMIT))
@@ -745,7 +753,6 @@ async def delete_confirm_cb(update: Update, context: CallbackContext):
     chat_id = session.get("chat_id")
     user_message_id = session.get("user_message_id")
     confirm_message_id = session.get("confirm_message_id")
-    instruction_message_id = session.get("instruction_message_id")
 
     # Clean up all intermediate messages
     try:
@@ -759,10 +766,6 @@ async def delete_confirm_cb(update: Update, context: CallbackContext):
         # Delete confirm message if different from current message
         if confirm_message_id and confirm_message_id != query.message.message_id:
             await context.bot.delete_message(chat_id=chat_id, message_id=confirm_message_id)
-            
-        # Delete instruction message if exists
-        if instruction_message_id:
-            await context.bot.delete_message(chat_id=chat_id, message_id=instruction_message_id)
             
     except Exception as e:
         logging.error(f"Error cleaning up messages: {e}")
