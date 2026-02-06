@@ -648,22 +648,6 @@ async def id_page(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
     
-    # Create a fake message for the id_command
-    fake_update = Update(
-        update_id=update.update_id,
-        message=query.message,
-        callback_query=query
-    )
-    
-    # Call the original id_command but with callback query
-    await id_command_callback(fake_update, context)
-
-# MODIFIED: ID command for callback
-async def id_command_callback(update: Update, context: CallbackContext):
-    """Show ID information in callback context."""
-    query = update.callback_query
-    await query.answer()
-    
     user_id = query.from_user.id
     chat_id = query.message.chat.id
     chat_type = query.message.chat.type
@@ -702,22 +686,15 @@ async def id_command(update: Update, context: CallbackContext):
     # Send the response back to the user
     await update.message.reply_text(response)
 
-# NEW: List page handler
+# MODIFIED: List page handler
 async def list_page(update: Update, context: CallbackContext):
     """Show list movies page."""
     query = update.callback_query
     await query.answer()
     
-    # Create a fake message for the list_movies command
-    fake_update = Update(
-        update_id=update.update_id,
-        message=query.message,
-        callback_query=query
-    )
-    
-    # Call list_movies with page 1
+    # Set page to 1 and call list_movies
     context.args = ["1"]
-    await list_movies(fake_update, context)
+    await list_movies(update, context)
 
 # NEW: Start page handler
 async def start_page(update: Update, context: CallbackContext):
@@ -792,12 +769,21 @@ async def admin_command(update: Update, context: CallbackContext):
         parse_mode="Markdown"
     )
 
-# MODIFIED: /list command
+# MODIFIED: /list command with proper handling for both messages and callbacks
 async def list_movies(update: Update, context: CallbackContext):
-    # 🔒 RESTRICT: Only work in bot PM
-    if update.effective_chat.type != "private":
-        await update.message.reply_text("❌ /list command only works in bot private message.")
-        return
+    # Check if it's a callback query or regular message
+    if update.callback_query:
+        user_id = update.callback_query.from_user.id
+        chat_type = update.callback_query.message.chat.type
+        is_callback = True
+    else:
+        # 🔒 RESTRICT: Only work in bot PM for regular messages
+        if update.effective_chat.type != "private":
+            await update.message.reply_text("❌ /list command only works in bot private message.")
+            return
+        user_id = update.effective_user.id
+        chat_type = update.effective_chat.type
+        is_callback = False
     
     # 📄 Get page number
     try:
@@ -810,10 +796,10 @@ async def list_movies(update: Update, context: CallbackContext):
     total = collection.count_documents({})
     if total == 0:
         text = "❌ No movies found."
-        if update.message:
-            await update.message.reply_text(text)
-        else:
+        if is_callback:
             await update.callback_query.message.edit_text(text)
+        else:
+            await update.message.reply_text(text)
         return
 
     total_pages = max(1, (total + LIST_LIMIT - 1) // LIST_LIMIT)
@@ -858,53 +844,59 @@ async def list_movies(update: Update, context: CallbackContext):
         keyboard.append(nav_buttons)
 
     # 🔥 SHOW DELETE BUTTON FOR ADMINS ONLY
-    user_id = (
-        update.effective_user.id
-        if update.effective_user
-        else update.callback_query.from_user.id
-    )
-    
     if user_id in ADMIN_IDS:
         keyboard.append(
             [InlineKeyboardButton("❌ Delete", callback_data=f"delete_page_{page}")]
         )
     
     # Add back button for callback queries
-    if update.callback_query:
+    if is_callback:
         keyboard.append(
             [InlineKeyboardButton("⬅ Back", callback_data="commands_page")]
         )
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    if update.message:
-        await update.message.reply_text(
-            text,
-            parse_mode="Markdown",
-            reply_markup=reply_markup
-        )
-    else:
+    if is_callback:
         await update.callback_query.message.edit_text(
             text,
             parse_mode="Markdown",
             reply_markup=reply_markup
         )
+    else:
+        await update.message.reply_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=reply_markup
+        )
 
 
+# MODIFIED: List pagination callback handler with error handling
 async def list_pagination_cb(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
 
-    page = int(query.data.split("_")[1])
+    # Extract page number from callback data
+    try:
+        page = int(query.data.split("_")[1])
+    except (IndexError, ValueError):
+        page = 1
+    
     context.args = [str(page)]
     await list_movies(update, context)
 
 
+# MODIFIED: Delete page callback handler with error handling
 async def delete_page_cb(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
 
-    page = int(query.data.split("_")[2])
+    # Extract page number from callback data
+    try:
+        page = int(query.data.split("_")[2])  # delete_page_1
+    except (IndexError, ValueError):
+        page = 1
+    
     user_id = query.from_user.id
     
     # 🔐 Admin check for delete
