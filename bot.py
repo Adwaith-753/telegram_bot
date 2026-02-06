@@ -44,7 +44,6 @@ TOKEN = os.getenv('TOKEN')
 DB_URL = os.getenv('DB_URL')
 SEARCH_GROUP_ID = int(os.getenv('SEARCH_GROUP_ID'))
 STORAGE_GROUP_ID = int(os.getenv('STORAGE_GROUP_ID'))
-ADMIN_IDS = set(int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip())
 PORT = int(os.getenv('PORT', 8088))  # Default to 8088 if not set
 LIST_LIMIT = 10
 delete_sessions = {}
@@ -539,20 +538,8 @@ async def start(update: Update, context: CallbackContext):
     )
 
 async def list_movies(update: Update, context: CallbackContext):
-    # 🔐 Admin check
-    user_id = (
-        update.effective_user.id
-        if update.effective_user
-        else update.callback_query.from_user.id
-    )
-
-    if user_id not in ADMIN_IDS:
-        if update.message:
-            await update.message.reply_text("❌ Admin only command.")
-        else:
-            await update.callback_query.answer("❌ Admin only command.", show_alert=True)
-        return
-
+    # REMOVED: Admin check - anyone can list movies now
+    
     # 📄 Get page number
     try:
         page = int(context.args[0]) if context.args else 1
@@ -583,7 +570,7 @@ async def list_movies(update: Update, context: CallbackContext):
         .limit(LIST_LIMIT)
     )
 
-    # 📝 Message text
+    # 📝 Message text (WITHOUT DELETE BUTTON FOR NON-ADMINS)
     text = (
         f"🎬 **Movie List**\n\n"
         f"📦 Total Movies: **{total}**\n"
@@ -610,10 +597,6 @@ async def list_movies(update: Update, context: CallbackContext):
 
     if nav_buttons:
         keyboard.append(nav_buttons)
-
-    keyboard.append(
-        [InlineKeyboardButton("❌ Delete", callback_data=f"delete_page_{page}")]
-    )
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -644,227 +627,24 @@ async def delete_page_cb(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
 
-    page = int(query.data.split("_")[2])
-    user_id = query.from_user.id
-    
-    # Send the instruction message and store its ID
-    instruction_msg = await query.message.reply_text(
-        "🗑 **Delete Movie**\n\n"
-        "Send the **movie number (1–10)** OR **movie name** you want to delete.",
-        parse_mode="Markdown"
-    )
-    
-    delete_sessions[user_id] = {
-        "page": page, 
-        "step": "ask", 
-        "list_message": query.message,
-        "instruction_message": instruction_msg.message_id
-    }
+    # REMOVED: Admin check - delete functionality disabled for non-admins
+    await query.answer("❌ Delete functionality is admin-only.", show_alert=True)
+    return
 
 
 async def delete_text_handler(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-
-    if user_id not in ADMIN_IDS:
-        return
-
-    session = delete_sessions.get(user_id)
-    if not session:
-        return
-
-    text = update.message.text.strip()
-    
-    # Store the user's message ID to delete it later
-    user_message_id = update.message.message_id
-    chat_id = update.effective_chat.id
-
-    # Delete the instruction message IMMEDIATELY
-    instruction_message_id = session.get("instruction_message")
-    if instruction_message_id:
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=instruction_message_id)
-        except Exception as e:
-            logging.error(f"Error deleting instruction message: {e}")
-
-    page = session["page"]
-    skip = (page - 1) * LIST_LIMIT
-    movies = list(collection.find().sort("_id", -1).skip(skip).limit(LIST_LIMIT))
-    movie = None
-
-    if text.isdigit():
-        idx = int(text) - 1
-        if 0 <= idx < len(movies):
-            movie = movies[idx]
-    else:
-        movie = collection.find_one({
-            "name": {"$regex": re.escape(text), "$options": "i"}
-        })
-
-    if not movie:
-        await update.message.reply_text("❌ Movie not found. Try again.")
-        return
-
-    session["movie"] = movie
-    session["user_message_id"] = user_message_id
-    session["chat_id"] = chat_id
-
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ Yes", callback_data="confirm_delete"),
-            InlineKeyboardButton("❌ No", callback_data="cancel_delete"),
-        ]
-    ]
-
-    # Store the confirm message so we can delete it later
-    confirm_msg = await update.message.reply_text(
-        f"⚠️ **Confirm Delete**\n\n"
-        f"🎬 {movie['name']}\n\n"
-        f"Do you want to delete this movie?",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
-    
-    # Store the confirm message ID for cleanup
-    session["confirm_message_id"] = confirm_msg.message_id
+    # REMOVED: Admin check - delete functionality disabled
+    # Just ignore delete-related text messages
+    return
 
 
 async def delete_confirm_cb(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
 
-    user_id = query.from_user.id
-
-    # 🔐 Admin-only protection
-    if user_id not in ADMIN_IDS:
-        await query.answer("❌ Not authorized", show_alert=True)
-        return
-
-    session = delete_sessions.get(user_id)
-    if not session or "movie" not in session:
-        await query.answer("⚠️ Delete session expired", show_alert=True)
-        return
-
-    movie = session["movie"]
-    
-    # Store the movie name BEFORE deletion
-    movie_name = movie['name']
-    
-    # Get message IDs for cleanup
-    chat_id = session.get("chat_id")
-    user_message_id = session.get("user_message_id")
-    confirm_message_id = session.get("confirm_message_id")
-
-    # Clean up all intermediate messages
-    try:
-        # Delete the confirm message (current message with Yes/No buttons)
-        await query.message.delete()
-        
-        # Delete user's input message if we have the ID
-        if chat_id and user_message_id:
-            await context.bot.delete_message(chat_id=chat_id, message_id=user_message_id)
-        
-        # Delete confirm message if different from current message
-        if confirm_message_id and confirm_message_id != query.message.message_id:
-            await context.bot.delete_message(chat_id=chat_id, message_id=confirm_message_id)
-            
-    except Exception as e:
-        logging.error(f"Error cleaning up messages: {e}")
-
-    if query.data == "confirm_delete":
-        try:
-            # 🗑 Delete movie
-            collection.delete_one({"movie_id": movie["movie_id"]})
-
-            # 🔄 Refresh list (SAFE WAY)
-            page = session["page"]
-            list_message = session["list_message"]
-
-            total = collection.count_documents({})
-            total_pages = max(1, (total + LIST_LIMIT - 1) // LIST_LIMIT)
-            page = min(page, total_pages)
-
-            skip = (page - 1) * LIST_LIMIT
-            movies = list(
-                collection.find()
-                .sort("_id", -1)
-                .skip(skip)
-                .limit(LIST_LIMIT)
-            )
-
-            text = (
-                f"🎬 **Movie List**\n\n"
-                f"📦 Total Movies: **{total}**\n"
-                f"📄 Page: **{page}/{total_pages}**\n\n"
-            )
-
-            for i, mov in enumerate(movies, start=1):
-                text += f"**{i}.** {mov.get('name', 'Unknown')}\n"
-
-            keyboard = []
-
-            if page > 1:
-                keyboard.append([
-                    InlineKeyboardButton("⬅ Prev", callback_data=f"list_{page - 1}")
-                ])
-
-            if page < total_pages:
-                keyboard.append([
-                    InlineKeyboardButton("➡ Next", callback_data=f"list_{page + 1}")
-                ])
-
-            keyboard.append(
-                [InlineKeyboardButton("❌ Delete", callback_data=f"delete_page_{page}")]
-            )
-
-            await list_message.edit_text(
-                text,
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            
-            # Send success message that auto-deletes after 3 seconds
-            success_msg = await context.bot.send_message(
-                chat_id=user_id,
-                text=f"✅ **Movie deleted successfully!**\n\n🎬 {movie_name}",
-                parse_mode="Markdown"
-            )
-            
-            # Auto-delete success message after 3 seconds
-            await asyncio.sleep(3)
-            try:
-                await success_msg.delete()
-            except:
-                pass
-
-        except Exception as e:
-            logging.error(f"Delete error: {e}")
-            error_msg = await context.bot.send_message(
-                chat_id=user_id,
-                text="❌ Failed to delete movie."
-            )
-            # Auto-delete error message after 3 seconds
-            await asyncio.sleep(3)
-            try:
-                await error_msg.delete()
-            except:
-                pass
-
-    else:
-        # Send cancellation message that auto-deletes after 3 seconds
-        cancel_msg = await context.bot.send_message(
-            chat_id=user_id,
-            text=f"❎ **Delete cancelled for:**\n\n🎬 {movie_name}",
-            parse_mode="Markdown"
-        )
-        # Auto-delete cancellation message after 3 seconds
-        await asyncio.sleep(3)
-        try:
-            await cancel_msg.delete()
-        except:
-            pass
-
-    # 🧹 Clear delete session
-    delete_sessions.pop(user_id, None)
+    # REMOVED: Admin check - delete functionality disabled
+    await query.answer("❌ Delete functionality is admin-only.", show_alert=True)
+    return
 
 
 # Define the /id command handler
@@ -892,7 +672,7 @@ async def menu_buttons_cb(update: Update, context: CallbackContext):
             "💬 **Available Commands**\n\n"
             "🔹 /start – Start the bot\n"
             "🔹 /id – Get your ID & group ID\n"
-            "🔹 /list – List movies (Admin only)\n"
+            "🔹 /list – List movies\n"
             "🔹 Send movie name – Search movies (Search Group)\n"
         )
 
@@ -1006,8 +786,11 @@ async def main():
         # CALLBACKS
         application.add_handler(CallbackQueryHandler(name_decision_handler,pattern="^(edit_name|continue_name)$"))
         application.add_handler(CallbackQueryHandler(list_pagination_cb,pattern="^list_"))
-        application.add_handler(CallbackQueryHandler(delete_page_cb,pattern="^delete_page_"))
-        application.add_handler(CallbackQueryHandler(delete_confirm_cb,pattern="^(confirm_delete|cancel_delete)$"))
+        
+        # Disabled delete callbacks since they're admin-only
+        # application.add_handler(CallbackQueryHandler(delete_page_cb,pattern="^delete_page_"))
+        # application.add_handler(CallbackQueryHandler(delete_confirm_cb,pattern="^(confirm_delete|cancel_delete)$"))
+        
         application.add_handler(CallbackQueryHandler(menu_buttons_cb, pattern="^(btn_1|btn_2|btn_3|btn_4|back_home)$"))
         application.add_handler(CallbackQueryHandler(get_movie_files))
 
@@ -1019,8 +802,8 @@ async def main():
         # SEARCH GROUP
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Chat(SEARCH_GROUP_ID),search_movie))
 
-        # ADMIN DELETE INPUT (SAFE)
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,delete_text_handler))
+        # DISABLED: ADMIN DELETE INPUT (since delete is admin-only)
+        # application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, delete_text_handler))
 
         await application.run_polling()
 
