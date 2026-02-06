@@ -44,7 +44,7 @@ TOKEN = os.getenv('TOKEN')
 DB_URL = os.getenv('DB_URL')
 SEARCH_GROUP_ID = int(os.getenv('SEARCH_GROUP_ID'))
 STORAGE_GROUP_ID = int(os.getenv('STORAGE_GROUP_ID'))
-ADMIN_IDS = set(int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip())  # KEEP THIS
+ADMIN_IDS = set(int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip())
 PORT = int(os.getenv('PORT', 8088))  # Default to 8088 if not set
 LIST_LIMIT = 10
 delete_sessions = {}
@@ -475,6 +475,11 @@ async def get_movie_files(update: Update, context: CallbackContext):
 async def start(update: Update, context: CallbackContext):
     """Handle the /start command in bot PM and deep links."""
     
+    # 🔒 RESTRICT: Only work in bot PM
+    if update.effective_chat.type != "private":
+        await update.message.reply_text("❌ /start command only works in bot private message.")
+        return
+    
     user = update.effective_user
     chat = update.effective_chat
 
@@ -538,7 +543,47 @@ async def start(update: Update, context: CallbackContext):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+# NEW: /admin command to list all admins - RESTRICTED TO BOT PM
+async def admin_command(update: Update, context: CallbackContext):
+    """List all admin IDs and names."""
+    # 🔒 RESTRICT: Only work in bot PM
+    if update.effective_chat.type != "private":
+        await update.message.reply_text("❌ /admin command only works in bot private message.")
+        return
+    
+    if not ADMIN_IDS:
+        await update.message.reply_text("❌ No admins configured.")
+        return
+    
+    admin_list = []
+    for admin_id in ADMIN_IDS:
+        try:
+            # Try to get admin user info from Telegram
+            user = await context.bot.get_chat(admin_id)
+            name = user.first_name or user.username or f"User {admin_id}"
+            admin_list.append(f"👤 {name} - ID: {admin_id}")
+        except Exception as e:
+            # If can't get info, just show ID
+            admin_list.append(f"👤 ID: {admin_id} (User info unavailable)")
+    
+    response = (
+        "👑 **Admin List** 👑\n\n" +
+        "\n".join(admin_list) +
+        f"\n\n📊 Total Admins: {len(ADMIN_IDS)}"
+    )
+    
+    await update.message.reply_text(
+        sanitize_unicode(response),
+        parse_mode="Markdown"
+    )
+
+# MODIFIED: /list command - RESTRICTED TO BOT PM
 async def list_movies(update: Update, context: CallbackContext):
+    # 🔒 RESTRICT: Only work in bot PM
+    if update.effective_chat.type != "private":
+        await update.message.reply_text("❌ /list command only works in bot private message.")
+        return
+    
     # 📄 Get page number - REMOVED ADMIN CHECK
     try:
         page = int(context.args[0]) if context.args else 1
@@ -869,16 +914,18 @@ async def delete_confirm_cb(update: Update, context: CallbackContext):
     delete_sessions.pop(user_id, None)
 
 
-# Define the /id command handler
+# MODIFIED: /id command - WORKS IN BOTH GROUPS AND BOT PM
 async def id_command(update: Update, context: CallbackContext):
     """Respond with the user's ID and the group ID."""
     user_id = update.effective_user.id  # Get the user's ID
     chat_id = update.effective_chat.id  # Get the group/chat ID
+    chat_type = update.effective_chat.type  # Get chat type
 
     # Construct the response
     response = (
         f"👤 Your ID: {user_id}\n"
-        f"💬 Group ID: {chat_id}"
+        f"💬 Chat ID: {chat_id}\n"
+        f"📱 Chat Type: {chat_type}"
     )
 
     # Send the response back to the user
@@ -892,10 +939,11 @@ async def menu_buttons_cb(update: Update, context: CallbackContext):
     if query.data == "btn_1":  # 💬 Commands
         text = (
             "💬 **Available Commands**\n\n"
-            "🔹 /start – Start the bot\n"
-            "🔹 /id – Get your ID & group ID\n"
-            "🔹 /list – List movies\n"
-            "🔹 Send movie name – Search movies (Search Group)\n"
+            "🔹 /start – Start the bot (Bot PM only)\n"
+            "🔹 /id – Get your ID & group ID (Works everywhere)\n"
+            "🔹 /admin – List all admins (Bot PM only)\n"
+            "🔹 /list – List movies (Bot PM only)\n"
+            "🔹 Send movie name – Search movies (Search Group only)\n"
         )
 
         await query.message.edit_text(
@@ -1004,6 +1052,7 @@ async def main():
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("id", id_command))
         application.add_handler(CommandHandler("list", list_movies))
+        application.add_handler(CommandHandler("admin", admin_command))
 
         # CALLBACKS
         application.add_handler(CallbackQueryHandler(name_decision_handler,pattern="^(edit_name|continue_name)$"))
