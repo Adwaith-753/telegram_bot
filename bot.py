@@ -472,6 +472,7 @@ async def get_movie_files(update: Update, context: CallbackContext):
             sanitize_unicode("❌ An error occurred while fetching the movie files.")
         )
 
+# MODIFIED: /start command with your original text format
 async def start(update: Update, context: CallbackContext):
     """Handle the /start command in bot PM and deep links."""
     
@@ -513,6 +514,7 @@ async def start(update: Update, context: CallbackContext):
     bot_name = context.bot.first_name
     user_name = user.first_name or user.username or "User" 
 
+    # Your original text format
     text = (
         f"ʜᴇʏ {user_name} ,\n\n"
         f"Mʏ Nᴀᴍᴇ ɪs {bot_name} ,\n"
@@ -521,18 +523,18 @@ async def start(update: Update, context: CallbackContext):
     )
 
     keyboard = [
-        [InlineKeyboardButton("➕ Add me to your chat 🤖", url=f"https://t.me/{context.bot.username}?startgroup=true")],
+        [InlineKeyboardButton("➕ Add Me to your chat 🤖", url=f"https://t.me/{context.bot.username}?startgroup=true")],
 
         # Button row 1
         [
-            InlineKeyboardButton("💬 Commands", callback_data="btn_1"),
-            InlineKeyboardButton("📦 Source", callback_data="btn_2"),
+            InlineKeyboardButton("💬 Commands", callback_data="commands_page"),
+            InlineKeyboardButton("🔗 Source", callback_data="source_page"),
         ],
 
         # Button row 2
         [
-            InlineKeyboardButton("📊 Status", callback_data="btn_3"),
-            InlineKeyboardButton("❌ Close", callback_data="btn_4"),
+            InlineKeyboardButton("📊 Status", callback_data="status_page"),
+            InlineKeyboardButton("❌ Close", callback_data="close_page"),
         ],
 
         
@@ -543,7 +545,220 @@ async def start(update: Update, context: CallbackContext):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# NEW: /admin command to list all admins - RESTRICTED TO BOT PM
+# NEW: Commands page handler
+async def commands_page(update: Update, context: CallbackContext):
+    """Show the commands page when user clicks on Commands button."""
+    query = update.callback_query
+    await query.answer()
+    
+    commands_text = "💬 Available Commands"
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("🚀 Start", callback_data="start_page"),
+            InlineKeyboardButton("👑 Admins", callback_data="admin_page"),
+        ],
+        [
+            InlineKeyboardButton("🆔 Get ID", callback_data="id_page"),
+            InlineKeyboardButton("📋 List Movies", callback_data="list_page"),
+        ],
+        [
+            InlineKeyboardButton("⬅ Back", callback_data="back_to_start"),
+        ]
+    ]
+    
+    await query.message.edit_text(
+        sanitize_unicode(commands_text),
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# NEW: Source page handler
+async def source_page(update: Update, context: CallbackContext):
+    """Show the source page when user clicks on Source button."""
+    query = update.callback_query
+    await query.answer()
+    
+    source_text = "🔗 Source\n\nThis bot is private."
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("⬅ Back", callback_data="back_to_start"),
+        ]
+    ]
+    
+    await query.message.edit_text(
+        sanitize_unicode(source_text),
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# NEW: Status page handler
+async def status_page(update: Update, context: CallbackContext):
+    """Show the status page when user clicks on Status button."""
+    query = update.callback_query
+    await query.answer()
+    
+    total = collection.count_documents({})
+    status_text = f"📊 Status\n\n🎬 Movies: {total}\n✅ Bot is online"
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("⬅ Back", callback_data="back_to_start"),
+        ]
+    ]
+    
+    await query.message.edit_text(
+        sanitize_unicode(status_text),
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# NEW: Admin page handler
+async def admin_page(update: Update, context: CallbackContext):
+    """Show admin information."""
+    query = update.callback_query
+    await query.answer()
+    
+    if not ADMIN_IDS:
+        admin_text = "❌ No admins configured."
+    else:
+        admin_list = []
+        for admin_id in ADMIN_IDS:
+            try:
+                user = await context.bot.get_chat(admin_id)
+                name = user.first_name or user.username or f"User {admin_id}"
+                admin_list.append(f"👤 {name} - ID: {admin_id}")
+            except Exception as e:
+                admin_list.append(f"👤 ID: {admin_id} (User info unavailable)")
+        
+        admin_text = "👑 Admin List 👑\n\n" + "\n".join(admin_list) + f"\n\n📊 Total Admins: {len(ADMIN_IDS)}"
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("⬅ Back", callback_data="commands_page"),
+        ]
+    ]
+    
+    await query.message.edit_text(
+        sanitize_unicode(admin_text),
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# NEW: ID page handler
+async def id_page(update: Update, context: CallbackContext):
+    """Show ID information."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Create a fake message for the id_command
+    fake_update = Update(
+        update_id=update.update_id,
+        message=query.message,
+        callback_query=query
+    )
+    
+    # Call the original id_command but with callback query
+    await id_command_callback(fake_update, context)
+
+# MODIFIED: ID command for callback
+async def id_command_callback(update: Update, context: CallbackContext):
+    """Show ID information in callback context."""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    chat_id = query.message.chat.id
+    chat_type = query.message.chat.type
+    
+    response = (
+        f"👤 Your ID: {user_id}\n"
+        f"💬 Chat ID: {chat_id}\n"
+        f"📱 Chat Type: {chat_type}"
+    )
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("⬅ Back", callback_data="commands_page"),
+        ]
+    ]
+    
+    await query.message.edit_text(
+        response,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# MODIFIED: Original /id command handler
+async def id_command(update: Update, context: CallbackContext):
+    """Respond with the user's ID and the group ID."""
+    user_id = update.effective_user.id  # Get the user's ID
+    chat_id = update.effective_chat.id  # Get the group/chat ID
+    chat_type = update.effective_chat.type  # Get chat type
+
+    # Construct the response
+    response = (
+        f"👤 Your ID: {user_id}\n"
+        f"💬 Chat ID: {chat_id}\n"
+        f"📱 Chat Type: {chat_type}"
+    )
+
+    # Send the response back to the user
+    await update.message.reply_text(response)
+
+# NEW: List page handler
+async def list_page(update: Update, context: CallbackContext):
+    """Show list movies page."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Create a fake message for the list_movies command
+    fake_update = Update(
+        update_id=update.update_id,
+        message=query.message,
+        callback_query=query
+    )
+    
+    # Call list_movies with page 1
+    context.args = ["1"]
+    await list_movies(fake_update, context)
+
+# NEW: Start page handler
+async def start_page(update: Update, context: CallbackContext):
+    """Go back to start page."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Get user info from the query
+    user = query.from_user
+    user_name = user.first_name or user.username or "User"
+    bot_name = context.bot.first_name
+    
+    text = (
+        f"ʜᴇʏ {user_name} ,\n\n"
+        f"Mʏ Nᴀᴍᴇ ɪs {bot_name} ,\n"
+        f"ʏᴏᴜ ᴄᴀɴ ᴜsᴇ ᴍᴇ ɪɴ ʏᴏᴜʀ ɢʀᴏᴜᴘ ɪ ᴡɪʟʟ ɢɪᴠᴇ "
+        f"ᴍᴏᴠɪᴇs ᴏʀ sᴇʀɪᴇs ɪɴ ʏᴏᴜʀ ɢʀᴏᴜᴘ.!! 😍"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("➕ Add Me to your chat 🤖", url=f"https://t.me/{context.bot.username}?startgroup=true")],
+
+        # Button row 1
+        [
+            InlineKeyboardButton("💬 Commands", callback_data="commands_page"),
+            InlineKeyboardButton("🔗 Source", callback_data="source_page"),
+        ],
+
+        # Button row 2
+        [
+            InlineKeyboardButton("📊 Status", callback_data="status_page"),
+            InlineKeyboardButton("❌ Close", callback_data="close_page"),
+        ],
+    ]
+    
+    await query.message.edit_text(
+        sanitize_unicode(text),
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# MODIFIED: /admin command
 async def admin_command(update: Update, context: CallbackContext):
     """List all admin IDs and names."""
     # 🔒 RESTRICT: Only work in bot PM
@@ -577,14 +792,14 @@ async def admin_command(update: Update, context: CallbackContext):
         parse_mode="Markdown"
     )
 
-# MODIFIED: /list command - RESTRICTED TO BOT PM
+# MODIFIED: /list command
 async def list_movies(update: Update, context: CallbackContext):
     # 🔒 RESTRICT: Only work in bot PM
     if update.effective_chat.type != "private":
         await update.message.reply_text("❌ /list command only works in bot private message.")
         return
     
-    # 📄 Get page number - REMOVED ADMIN CHECK
+    # 📄 Get page number
     try:
         page = int(context.args[0]) if context.args else 1
     except ValueError:
@@ -652,6 +867,12 @@ async def list_movies(update: Update, context: CallbackContext):
     if user_id in ADMIN_IDS:
         keyboard.append(
             [InlineKeyboardButton("❌ Delete", callback_data=f"delete_page_{page}")]
+        )
+    
+    # Add back button for callback queries
+    if update.callback_query:
+        keyboard.append(
+            [InlineKeyboardButton("⬅ Back", callback_data="commands_page")]
         )
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -862,6 +1083,11 @@ async def delete_confirm_cb(update: Update, context: CallbackContext):
                 keyboard.append(
                     [InlineKeyboardButton("❌ Delete", callback_data=f"delete_page_{page}")]
                 )
+            
+            # Add back button
+            keyboard.append(
+                [InlineKeyboardButton("⬅ Back", callback_data="commands_page")]
+            )
 
             await list_message.edit_text(
                 text,
@@ -913,98 +1139,38 @@ async def delete_confirm_cb(update: Update, context: CallbackContext):
     # 🧹 Clear delete session
     delete_sessions.pop(user_id, None)
 
-
-# MODIFIED: /id command - WORKS IN BOTH GROUPS AND BOT PM
-async def id_command(update: Update, context: CallbackContext):
-    """Respond with the user's ID and the group ID."""
-    user_id = update.effective_user.id  # Get the user's ID
-    chat_id = update.effective_chat.id  # Get the group/chat ID
-    chat_type = update.effective_chat.type  # Get chat type
-
-    # Construct the response
-    response = (
-        f"👤 Your ID: {user_id}\n"
-        f"💬 Chat ID: {chat_id}\n"
-        f"📱 Chat Type: {chat_type}"
-    )
-
-    # Send the response back to the user
-    await update.message.reply_text(response)
-
-
+# MODIFIED: Menu callback handler
 async def menu_buttons_cb(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
 
-    if query.data == "btn_1":  # 💬 Commands
-        text = (
-            "💬 **Available Commands**\n\n"
-            "🔹 /start – Start the bot (Bot PM only)\n"
-            "🔹 /id – Get your ID & group ID (Works everywhere)\n"
-            "🔹 /admin – List all admins (Bot PM only)\n"
-            "🔹 /list – List movies (Bot PM only)\n"
-            "🔹 Send movie name – Search movies (Search Group only)\n"
-        )
-
-        await query.message.edit_text(
-            text,
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅ Back", callback_data="back_home")]
-            ])
-        )
-
-    elif query.data == "btn_2":  # 📦 Source
-        await query.message.edit_text(
-            "📦 **Source**\n\nThis bot is private.",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅ Back", callback_data="back_home")]
-            ])
-        )
-
-    elif query.data == "btn_3":  # 📊 Status
-        total = collection.count_documents({})
-        await query.message.edit_text(
-            f"📊 **Bot Status**\n\n🎬 Movies: **{total}**\n✅ Bot is online",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅ Back", callback_data="back_home")]
-            ])
-        )
-
-    elif query.data == "btn_4":  # ❌ Close
+    if query.data == "commands_page":
+        await commands_page(update, context)
+    
+    elif query.data == "source_page":
+        await source_page(update, context)
+    
+    elif query.data == "status_page":
+        await status_page(update, context)
+    
+    elif query.data == "close_page":
         await query.message.delete()
+    
+    elif query.data == "back_to_start":
+        await start_page(update, context)
+    
+    elif query.data == "admin_page":
+        await admin_page(update, context)
+    
+    elif query.data == "id_page":
+        await id_page(update, context)
+    
+    elif query.data == "list_page":
+        await list_page(update, context)
+    
+    elif query.data == "start_page":
+        await start_page(update, context)
 
-    elif query.data == "back_home":
-        # Get user info from the query
-        user = query.from_user
-        user_name = user.first_name or user.username or "User"
-        bot_name = context.bot.first_name
-        
-        text = (
-            f"ʜᴇʏ {user_name},\n\n"
-            f"Mʏ Nᴀᴍᴇ ɪs {bot_name},\n"
-            f"ʏᴏᴜ ᴄᴀɴ ᴜsᴇ ᴍᴇ ɪɴ ʏᴏᴜʀ ɢʀᴏᴜᴘ 😍"
-        )
-        
-        await query.message.edit_text(
-            text,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(
-                    "➕ Add me to your chat 🤖",
-                    url=f"https://t.me/{context.bot.username}?startgroup=true"
-                )],
-                [
-                    InlineKeyboardButton("💬 Commands", callback_data="btn_1"),
-                    InlineKeyboardButton("📦 Source", callback_data="btn_2"),
-                ],
-                [
-                    InlineKeyboardButton("📊 Status", callback_data="btn_3"),
-                    InlineKeyboardButton("❌ Close", callback_data="btn_4"),
-                ],
-            ])
-        )
 
 async def start_web_server():
     """Start a web server for health checks."""
@@ -1066,7 +1232,7 @@ async def main():
         application.add_handler(CallbackQueryHandler(list_pagination_cb,pattern="^list_"))
         application.add_handler(CallbackQueryHandler(delete_page_cb,pattern="^delete_page_"))
         application.add_handler(CallbackQueryHandler(delete_confirm_cb,pattern="^(confirm_delete|cancel_delete)$"))
-        application.add_handler(CallbackQueryHandler(menu_buttons_cb, pattern="^(btn_1|btn_2|btn_3|btn_4|back_home)$"))
+        application.add_handler(CallbackQueryHandler(menu_buttons_cb, pattern="^(commands_page|source_page|status_page|close_page|back_to_start|admin_page|id_page|list_page|start_page)$"))
         application.add_handler(CallbackQueryHandler(get_movie_files))
 
         # STORAGE GROUP
