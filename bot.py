@@ -511,11 +511,11 @@ async def start(update: Update, context: CallbackContext):
 
     # ---- NORMAL /START IN BOT PM ----
     bot_name = context.bot.first_name
-    user_name = user.first_name or "User"
+    user_name = user.first_name or user.username or "User" 
 
     text = (
-        f"ʜᴇʏ {sanitize_unicode(user_name)} ,\n\n"
-        f"Mʏ Nᴀᴍᴇ ɪs {sanitize_unicode(bot_name)} ,\n"
+        f"ʜᴇʏ {user_name} ,\n\n"
+        f"Mʏ Nᴀᴍᴇ ɪs {bot_name} ,\n"
         f"ʏᴏᴜ ᴄᴀɴ ᴜsᴇ ᴍᴇ ɪɴ ʏᴏᴜʀ ɢʀᴏᴜᴘ ɪ ᴡɪʟʟ ɢɪᴠᴇ "
         f"ᴍᴏᴠɪᴇs ᴏʀ sᴇʀɪᴇs ɪɴ ʏᴏᴜʀ ɢʀᴏᴜᴘ.!! 😍"
     )
@@ -977,12 +977,19 @@ async def menu_buttons_cb(update: Update, context: CallbackContext):
         await query.message.delete()
 
     elif query.data == "back_home":
+        # Get user info from the query
+        user = query.from_user
+        user_name = user.first_name or user.username or "User"
+        bot_name = context.bot.first_name
+        
+        text = (
+            f"ʜᴇʏ {user_name},\n\n"
+            f"Mʏ Nᴀᴍᴇ ɪs {bot_name},\n"
+            f"ʏᴏᴜ ᴄᴀɴ ᴜsᴇ ᴍᴇ ɪɴ ʏᴏᴜʀ ɢʀᴏᴜᴘ 😍"
+        )
+        
         await query.message.edit_text(
-            sanitize_unicode(
-                f"ʜᴇʏ ,\n\n"
-                f"Mʏ Nᴀᴍᴇ ɪs {context.bot.first_name} ,\n"
-                f"ʏᴏᴜ ᴄᴀɴ ᴜsᴇ ᴍᴇ ɪɴ ʏᴏᴜʀ ɢʀᴏᴜᴘ 😍"
-            ),
+            text,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton(
                     "➕ Add me to your chat 🤖",
