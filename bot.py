@@ -97,42 +97,47 @@ def sanitize_unicode(text):
 
 # Clean filename function
 def clean_filename(filename):
-    # Remove text inside square brackets
+    """Clean the uploaded filename by removing unnecessary tags and extracting relevant details."""
+    # Remove text inside square brackets (like [CK], [1080p])
     filename = re.sub(r'\[.*?\]', '', filename)
 
-    # Remove emojis / unicode junk
+    # Remove prefixes like @TamilMob_LinkZz and leading special characters
+    filename = re.sub(r'^[@\W_]+', '', filename)  # Removes @, -, _, spaces at the start
+
+    # Remove emojis and special characters
     filename = re.sub(r'[^\x00-\x7F]+', '', filename)
 
-    # Remove unwanted tags
-    pattern = r'(?i)(HDRip|10bit|x264|AAC\d*|MB|AMZN|WEB-DL|WEBRip|HEVC|x265|ESub|HQ|\.mkv|\.mp4|\.avi|\.mov|BluRay|DVDRip|720p|1080p|540p|480p|SD|HD|CAM|DVDScr|R5|TS|Rip|BRRip|AC3|DualAudio|6CH|v\d+)(\W|$)'
-    filename = re.sub(pattern, ' ', filename)
-
+    # Replace underscores with spaces
     filename = re.sub(r'[_\s]+', ' ', filename).strip()
 
-    # Extract details
-    match = re.search(
-        r'^(.*?)[\s_]*\(?(\d{4})\)?[\s_]*(Malayalam|Tamil|Hindi|Telugu|English)?',
-        filename,
-        re.IGNORECASE
-    )
+    # Remove unwanted tags
+    pattern = r'(?i)(HDRip|10bit|x264|AAC\d*|MB|AMZN|WEB-DL|WEBRip|HEVC|x265|ESub|HQ|\.mkv|\.mp4|\.avi|\.mov|BluRay|DVDRip|720p|1080p|540p|SD|HD|CAM|DVDScr|R5|TS|Rip|BRRip|AC3|DualAudio|6CH|v\d+)(\W|$)'
+    filename = re.sub(pattern, ' ', filename).strip()
+
+    # Extract movie name, year, and language
+    match = re.search(r'^(.*?)[\s_]*\(?(\d{4})\)?[\s_]*(Malayalam|Tamil|Hindi|Telugu|English)?', filename, re.IGNORECASE)
 
     if match:
+        name = match.group(1).strip(" -._")  # Remove extra special characters
+        year = match.group(2).strip() if match.group(2) else ""
+        language = match.group(3).strip() if match.group(3) else ""
 
-        movie = match.group(1).strip(" -._")
-        year = match.group(2) or "Unknown"
-        language = match.group(3) or "Unknown"
+        # Format the cleaned name
+        cleaned_name = f"{name} ({year}) {language}".strip()
+        return re.sub(r'\s+', ' ', cleaned_name)  # Remove extra spaces
 
-        # FINAL FORMAT
-        formatted = (
-            f"📽️ 𝐌𝐨𝐯𝐢𝐞 : {movie}\n"
-            f"📆 𝐘𝐞𝐚𝐫 : {year}\n"
-            f"🎭 𝐆𝐞𝐧𝐫𝐞 : none\n"
-            f"🔊 𝐀𝐮𝐝𝐢𝐨 : {language}"
-        )
-
-        return formatted
-
+    # If no match is found, return the cleaned filename
     return filename.strip(" -._")
+
+# Temporary storage for incomplete movie uploads
+upload_sessions = defaultdict(lambda: {
+    'files': [],
+    'image': None,
+    'movie_name': None,
+    'awaiting_name_edit': False,
+    'name_confirmed': False,
+    'asked_name': False
+})
 
 async def name_decision_handler(update: Update, context: CallbackContext):
     """Handle name editing decisions from inline buttons."""
