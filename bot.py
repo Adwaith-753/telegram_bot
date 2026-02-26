@@ -118,13 +118,18 @@ def clean_filename(filename):
     match = re.search(r'^(.*?)[\s_]*\(?(\d{4})\)?[\s_]*(Malayalam|Tamil|Hindi|Telugu|English)?', filename, re.IGNORECASE)
 
     if match:
-        name = match.group(1).strip(" -._")  # Remove extra special characters
-        year = match.group(2).strip() if match.group(2) else ""
-        language = match.group(3).strip() if match.group(3) else ""
+        name = match.group(1).strip(" -._")
+        year = match.group(2).strip() if match.group(2) else "Unknown"
+        language = match.group(3).strip() if match.group(3) else "Unknown"
 
-        # Format the cleaned name
-        cleaned_name = f"{name} ({year}) {language}".strip()
-        return re.sub(r'\s+', ' ', cleaned_name)  # Remove extra spaces
+        cleaned_name = (
+            f"📽️ 𝐌𝐨𝐯𝐢𝐞 : {name}\n"
+            f"📆 𝐘𝐞𝐚𝐫 : ({year})\n"
+            f"🎭 𝐆𝐞𝐧𝐫𝐞 : None\n"
+            f"🔊 𝐀𝐮𝐝𝐢𝐨 : {language}"
+        ).strip()
+
+        return cleaned_name
 
     # If no match is found, return the cleaned filename
     return filename.strip(" -._")
