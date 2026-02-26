@@ -828,7 +828,18 @@ async def list_movies(update: Update, context: CallbackContext):
     )
 
     for i, movie in enumerate(movies, start=1):
-        text += f"**{i}.** {movie.get('name', 'Unknown')}\n"
+
+        full_name = movie.get('name', 'Unknown')
+
+        # Extract Movie Title from formatted text
+        match = re.search(r"𝐌𝐨𝐯𝐢𝐞\s*:\s*(.+)", full_name)
+
+        if match:
+            movie_title = match.group(1).strip()
+        else:
+            movie_title = full_name.split("\n")[0]
+
+        text += f"**{i}.** {movie_title}\n"
 
     # ⬅➡ Pagination buttons
     nav_buttons = []
@@ -1061,7 +1072,18 @@ async def delete_confirm_cb(update: Update, context: CallbackContext):
             )
 
             for i, mov in enumerate(movies, start=1):
-                text += f"**{i}.** {mov.get('name', 'Unknown')}\n"
+
+                full_name = mov.get('name', 'Unknown')
+
+                match = re.search(r"𝐌𝐨𝐯𝐢𝐞\s*:\s*(.+)", full_name)
+
+                if match:
+                    movie_title = match.group(1).strip()
+                else:
+                    movie_title = full_name.split("\n")[0]
+
+                text += f"**{i}.** {movie_title}\n"
+
 
             keyboard = []
 
