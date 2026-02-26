@@ -222,13 +222,13 @@ async def check_and_save_movie(user_id, update, context, message=None):
         msg_obj = message or update.message
         if msg_obj:
             await msg_obj.reply_text(
-                sanitize_unicode(f"✅ Successfully added movie: {session['movie_name']}")
+                sanitize_unicode(f"✅ Successfully added movie:\n\n{session['movie_name']}")
             )
-        else:
+        else: 
             # Fallback: try to get message from callback query
             if update.callback_query:
                 await update.callback_query.message.reply_text(
-                    sanitize_unicode(f"✅ Successfully added movie: {session['movie_name']}")
+                    sanitize_unicode(f"✅ Successfully added movie:\n\n{session['movie_name']}")
                 )
 
         # Send preview to search group
@@ -303,7 +303,7 @@ async def add_movie(update: Update, context: CallbackContext):
             session['movie_name'] = cleaned_name
 
         await update.message.reply_text(
-            sanitize_unicode(f"✅ File added: {cleaned_name}")
+            sanitize_unicode(f"✅ File added:\n{cleaned_name}")
         )
 
         # Save only if name already confirmed and image exists
